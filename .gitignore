@@ -25,6 +25,18 @@ config.yaml
 config.json
 results/
 
+# CI artifact downloads and locally assembled release bundles
+artifacts/
+stairspeedtest-mihomo-*/
+
+# Temporary mihomo process output files
+mihomo.out
+mihomo.err
+mihomo.pid
+
+# Local debug / log dumps
+linux64_log.txt
+
 # Editor / OS junk
 .vscode/
 .idea/

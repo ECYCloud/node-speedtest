@@ -1,5 +1,11 @@
 name: GitHub CI
-on: [push]
+# Legacy multi-platform release pipeline. The from-source dependency build is
+# fragile in 2026 (upstream sources moved). Triggered only on tags (full
+# release) and manually; daily verification lives in verify.yml.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
 
 concurrency: 
   group: ${{ github.ref }}-${{ github.workflow }}

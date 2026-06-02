@@ -1,0 +1,58 @@
+name: Verify build (Linux)
+# Minimal compile-check workflow: confirms the C++ source still compiles after
+# the mihomo-kernel refactor. Skips third-party kernel binaries and the legacy
+# from-source dependency build (those are unrelated to our code change).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ubuntu_amd64_compile:
+    name: Ubuntu 24.04 / amd64 / cmake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libcurl4-openssl-dev libssl-dev libyaml-cpp-dev \
+            libevent-dev libpcre2-dev rapidjson-dev \
+            libpng-dev libfreetype-dev zlib1g-dev libbz2-dev
+
+      - name: Build PNGwriter (header-only-ish, not in apt)
+        run: |
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/usr/local
+          cmake --build /tmp/pngwriter/build -j$(nproc)
+          sudo cmake --install /tmp/pngwriter/build
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile
+        run: cmake --build build -j$(nproc)
+
+      - name: Inspect produced binary
+        run: |
+          ls -la build/ || true
+          file build/stairspeedtest 2>/dev/null || \
+          file build/Release/stairspeedtest 2>/dev/null || \
+          find build -type f -name 'stairspeedtest*' -exec file {} \;
+
+      - name: Upload binary
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stairspeedtest-linux-amd64
+          path: |
+            build/stairspeedtest
+            build/Release/stairspeedtest
+          if-no-files-found: warn
+          retention-days: 7

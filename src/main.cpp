@@ -257,6 +257,9 @@ void readConf(std::string path)
     ini.GetBoolIfExist("single_test_force_export", single_test_force_export);
     ini.GetBoolIfExist("export_as_new_style", export_as_new_style);
     ini.GetIfExist("export_color_style", export_color_style);
+    ini.GetIntIfExist("image_scale", image_scale);
+    if(image_scale < 1) image_scale = 1;
+    if(image_scale > 6) image_scale = 6;
     if(ini.ItemExist("custom_color_groups"))
     {
         vChild = split(ini.Get("custom_color_groups"), "|");
@@ -352,7 +355,7 @@ static bool hasAnyTestData(const std::vector<nodeInfo> &nodes)
 
 void signalHandler(int signum)
 {
-    std::cerr << "\nInterrupt signal (" << signum << ") received. Saving partial results...\n";
+    std::cerr << "\n收到中断信号 (" << signum << ")，正在保存已完成的部分结果...\n";
 
 #ifdef __APPLE__
     killClient(0);
@@ -370,7 +373,7 @@ void signalHandler(int signum)
                 resultPath = "results" PATH_SLASH + getTime(1) + "-partial.log";
             saveResult(allNodes);
             writeLog(LOG_TYPE_INFO, "Partial result log written to " + resultPath);
-            std::cerr << "Partial result log: " << resultPath << "\n";
+            std::cerr << "已保存部分结果日志：" << resultPath << "\n";
 
             std::string pngpath = exportRender(resultPath, allNodes,
                                                export_with_maxspeed,
@@ -379,11 +382,11 @@ void signalHandler(int signum)
                                                export_as_new_style,
                                                test_nat_type);
             writeLog(LOG_TYPE_INFO, "Partial result picture saved to " + pngpath);
-            std::cerr << "Partial result picture: " << pngpath << "\n";
+            std::cerr << "已保存部分结果图片：" << pngpath << "\n";
         }
         else
         {
-            std::cerr << "No completed nodes yet, nothing to save.\n";
+            std::cerr << "尚无完成的节点，无内容可保存。\n";
         }
     }
     catch(const std::exception &e)
@@ -948,7 +951,7 @@ int main(int argc, char* argv[])
     if(sub_url.size())
     {
         link = sub_url;
-        std::cout<<"Provided from argument.\n"<<std::endl;
+        std::cout<<"已从命令行参数读取链接。\n"<<std::endl;
     }
     else
     {

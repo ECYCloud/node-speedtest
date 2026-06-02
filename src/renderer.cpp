@@ -15,6 +15,11 @@ using namespace std::chrono;
 
 std::string export_sort_method_render = "none";
 bool export_as_ssrspeed = false;
+// Resolution multiplier applied to every geometric size (font, line height,
+// padding, etc). The final image is image_scale * image_scale times denser,
+// which makes the result PNG considerably sharper at the cost of file size.
+// Externally configured via the [export] image_scale ini key in pref.ini.
+int image_scale = 2;
 
 std::vector<color> colorgroup;
 std::vector<int> bounds;
@@ -299,14 +304,16 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes, b
     //predefined values
     std::string font = "tools" PATH_SLASH "misc" PATH_SLASH "WenQuanYiMicroHei-01.ttf";
 
-    int fontsize = 12, text_x_offset = 5, height_line = 24, text_y_offset = 7;
+    int fontsize = 12 * image_scale;
+    const int text_x_offset = 5 * image_scale;
+    int height_line = 24 * image_scale, text_y_offset = 7 * image_scale;
     double border_red = 0.8, border_green = 0.8, border_blue = 0.8;
     if(export_as_new_style)
     {
-        height_line = 30;
-        text_y_offset = 10;
+        height_line = 30 * image_scale;
+        text_y_offset = 10 * image_scale;
     }
-    const int center_align_offset = 8, vertical_delim_align_offset = 2;
+    const int center_align_offset = 8 * image_scale, vertical_delim_align_offset = 2 * image_scale;
     const double text_red = 0.0, text_green = 0.0, text_blue = 0.0;
     //extra value for aligning to the center
     const int enableCenterAlign = export_as_new_style ? 1 : 0;
@@ -318,9 +325,9 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes, b
     {
         export_as_new_style = true;
         font = "tools" PATH_SLASH "misc" PATH_SLASH "SourceHanSansCN-Medium.otf";
-        fontsize = 13;
-        height_line = 30;
-        text_y_offset = 7;
+        fontsize = 13 * image_scale;
+        height_line = 30 * image_scale;
+        text_y_offset = 7 * image_scale;
         border_red = 0.5;
         border_green = 0.5;
         border_blue = 0.5;
@@ -335,25 +342,25 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes, b
     std::sort(nodes.begin(), nodes.end(), comparer); //sort by export_sort_method
 
     //add title line into the list
-    node.group = "Group";
-    node.remarks = "Remarks";
+    node.group = "分组";
+    node.remarks = "备注";
     if(export_as_new_style)
     {
-        node.pkLoss = "     Loss     ";
-        node.avgPing = "     Ping     ";
-        node.sitePing = "  Google Ping  ";
-        node.avgSpeed = "  AvgSpeed  ";
-        node.maxSpeed = "  MaxSpeed  ";
-        node.natType = "  UDP NAT Type  ";
+        node.pkLoss = "     丢包率     ";
+        node.avgPing = "     TCP 延迟     ";
+        node.sitePing = "  Google 延迟  ";
+        node.avgSpeed = "  平均速度  ";
+        node.maxSpeed = "  最大速度  ";
+        node.natType = "  UDP NAT 类型  ";
     }
     else
     {
-        node.pkLoss = "Pk.Loss";
-        node.avgPing = "TCP Ping";
-        node.sitePing = "Google Ping";
-        node.avgSpeed = "Avg.Speed";
-        node.maxSpeed = "Max.Speed";
-        node.natType = "UDP NAT Type";
+        node.pkLoss = "丢包率";
+        node.avgPing = "TCP 延迟";
+        node.sitePing = "Google 延迟";
+        node.avgSpeed = "平均速度";
+        node.maxSpeed = "最大速度";
+        node.natType = "UDP NAT 类型";
     }
     nodes.insert(nodes.begin(), node);
 
@@ -437,21 +444,21 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes, b
         total_width += nattype_width;
 
     //generating information
-    std::string gentime = "Generated at " + getTime(3);
-    std::string traffic = "Traffic used : " + speedCalc((double)total_traffic) + ". ";
-    std::string about = "By Stair Speedtest Reborn " VERSION ".";
-    std::string title = "  Stair Speedtest Reborn Result Table ( " VERSION " )  ";
+    std::string gentime = "生成时间：" + getTime(3);
+    std::string traffic = "已使用流量：" + speedCalc((double)total_traffic) + "。 ";
+    std::string about = "由 Stair Speedtest Reborn " VERSION " 生成。";
+    std::string title = "  Stair Speedtest Reborn 测速结果 ( " VERSION " )  ";
     //SSRSpeed style
     if(export_as_ssrspeed)
     {
-        traffic += "Time used: " + secondToString(test_duration) + ". Online Node(s) : [" + std::to_string(onlines) + "/" + std::to_string(node_count) + "]";
-        title = "  SSRSpeed Result Table ( v2.7.2 )  ";
+        traffic += "测试时长：" + secondToString(test_duration) + "。 在线节点：[" + std::to_string(onlines) + "/" + std::to_string(node_count) + "]";
+        title = "  SSRSpeed 测速结果 ( v2.7.2 )  ";
     }
     else
     {
         if(export_as_new_style)
-            traffic += "Time used : " + secondToString(test_duration) + ". ";
-        traffic += "Working Node(s) : [" + std::to_string(onlines) + "/" + std::to_string(node_count) + "]";
+            traffic += "测试时长：" + secondToString(test_duration) + "。 ";
+        traffic += "可用节点：[" + std::to_string(onlines) + "/" + std::to_string(node_count) + "]";
     }
 
     final_width = total_width;

@@ -29,7 +29,8 @@ jobs:
           git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
           cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
                 -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_INSTALL_PREFIX=/usr/local
+                -DCMAKE_INSTALL_PREFIX=/usr/local \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build /tmp/pngwriter/build -j$(nproc)
           sudo cmake --install /tmp/pngwriter/build
 
@@ -92,7 +93,8 @@ jobs:
           cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
                 -G "MinGW Makefiles" \
                 -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_INSTALL_PREFIX=/mingw64
+                -DCMAKE_INSTALL_PREFIX=/mingw64 \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build /tmp/pngwriter/build -j
           cmake --install /tmp/pngwriter/build
 

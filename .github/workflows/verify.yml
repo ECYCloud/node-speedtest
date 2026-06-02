@@ -56,3 +56,62 @@ jobs:
             build/Release/stairspeedtest
           if-no-files-found: warn
           retention-days: 7
+
+  windows_amd64_compile:
+    name: Windows / amd64 / MSYS2 MinGW64
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-yaml-cpp
+            mingw-w64-x86_64-libevent
+            mingw-w64-x86_64-pcre2
+            mingw-w64-x86_64-rapidjson
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-freetype
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-bzip2
+
+      - name: Build PNGwriter from source (not packaged in MSYS2)
+        run: |
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -G "MinGW Makefiles" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/mingw64
+          cmake --build /tmp/pngwriter/build -j
+          cmake --install /tmp/pngwriter/build
+
+      - name: Configure
+        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile
+        run: cmake --build build -j
+
+      - name: Inspect artifact
+        run: |
+          ls -la build/
+          file build/stairspeedtest.exe || true
+
+      - name: Upload binary
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stairspeedtest-windows-amd64
+          path: build/stairspeedtest.exe
+          if-no-files-found: warn
+          retention-days: 7

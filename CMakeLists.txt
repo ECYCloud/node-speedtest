@@ -1,5 +1,5 @@
+cmake_minimum_required(VERSION 3.10)
 project(stairspeedtest LANGUAGES CXX)
-cmake_minimum_required(VERSION 3.4)
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 INCLUDE_DIRECTORIES("${CMAKE_SOURCE_DIR}/include/")
 IF(NOT CMAKE_BUILD_TYPE)

@@ -91,7 +91,6 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
           cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
-                -G "MinGW Makefiles" \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_INSTALL_PREFIX=/mingw64 \
                 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
@@ -99,7 +98,7 @@ jobs:
           cmake --install /tmp/pngwriter/build
 
       - name: Configure
-        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Compile
         run: cmake --build build -j

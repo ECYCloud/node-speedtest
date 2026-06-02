@@ -269,7 +269,7 @@ std::string vlessConstruct(const std::string &group, const std::string &remarks,
     return out;
 }
 
-std::string hysteria2Construct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &ports, const std::string &password, const std::string &sni, const std::string &obfs, const std::string &obfsPassword, const std::string &up, const std::string &down, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv)
+std::string hysteria2Construct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &ports, const std::string &password, const std::string &sni, const std::string &obfs, const std::string &obfsPassword, const std::string &up, const std::string &down, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv, const std::string &hop_interval)
 {
     (void)group; (void)remarks; (void)tfo;
     std::string out = mihomoHeader();
@@ -279,6 +279,8 @@ std::string hysteria2Construct(const std::string &group, const std::string &rema
     out += "    port: " + port + "\n";
     if(!ports.empty())
         out += "    ports: " + yq(ports) + "\n";
+    if(!hop_interval.empty())
+        out += "    hop-interval: " + hop_interval + "\n";
     out += "    password: " + yq(password) + "\n";
     if(!sni.empty())
         out += "    sni: " + yq(sni) + "\n";

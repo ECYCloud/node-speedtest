@@ -65,7 +65,7 @@ std::string speedtest_mode = "all";
 std::string override_conf_port = "";
 std::string export_color_style = "rainbow";
 int def_thread_count = 4;
-bool export_with_maxspeed = false;
+bool export_with_maxspeed = true;
 bool export_as_new_style = true;
 bool test_site_ping = true;
 bool test_upload = false;
@@ -73,7 +73,7 @@ bool test_nat_type = true;
 bool multilink_export_as_one_image = false;
 bool single_test_force_export = false;
 bool verbose = false;
-std::string export_sort_method = "none";
+std::string export_sort_method = "rmaxspeed";
 
 // Indexed by SPEEDTEST_MESSAGE_FOUND* enum values; sized to comfortably cover
 // the largest *FOUND* value (currently SPEEDTEST_MESSAGE_FOUNDANYTLS which sits
@@ -336,17 +336,65 @@ void readConf(std::string path)
     ini.GetIntIfExist("listen_port", listen_port);
 }
 
+extern std::vector<nodeInfo> allNodes;
+void saveResult(std::vector<nodeInfo> &nodes);
+
+// Returns true if any node in `nodes` has actual test data we'd want to save.
+static bool hasAnyTestData(const std::vector<nodeInfo> &nodes)
+{
+    for(const auto &n : nodes)
+    {
+        if(n.totalRecvBytes > 0 || n.avgPing != "0.00")
+            return true;
+    }
+    return false;
+}
+
 void signalHandler(int signum)
 {
-    std::cerr << "Interrupt signal (" << signum << ") received.\n";
+    std::cerr << "\nInterrupt signal (" << signum << ") received. Saving partial results...\n";
 
 #ifdef __APPLE__
-    killClient(SPEEDTEST_MESSAGE_FOUNDSS);
-    killClient(SPEEDTEST_MESSAGE_FOUNDSSR);
-    killClient(SPEEDTEST_MESSAGE_FOUNDVMESS);
-    killClient(SPEEDTEST_MESSAGE_FOUNDTROJAN);
+    killClient(0);
 #endif // __APPLE__
     killByHandle();
+
+    // Best-effort: persist whatever was already tested so the user doesn't lose work
+    // when they hit Ctrl+C mid-run. Any errors here are swallowed to avoid masking
+    // the original interrupt.
+    try
+    {
+        if(!allNodes.empty() && hasAnyTestData(allNodes))
+        {
+            if(resultPath.empty())
+                resultPath = "results" PATH_SLASH + getTime(1) + "-partial.log";
+            saveResult(allNodes);
+            writeLog(LOG_TYPE_INFO, "Partial result log written to " + resultPath);
+            std::cerr << "Partial result log: " << resultPath << "\n";
+
+            std::string pngpath = exportRender(resultPath, allNodes,
+                                               export_with_maxspeed,
+                                               export_sort_method,
+                                               export_color_style,
+                                               export_as_new_style,
+                                               test_nat_type);
+            writeLog(LOG_TYPE_INFO, "Partial result picture saved to " + pngpath);
+            std::cerr << "Partial result picture: " << pngpath << "\n";
+        }
+        else
+        {
+            std::cerr << "No completed nodes yet, nothing to save.\n";
+        }
+    }
+    catch(const std::exception &e)
+    {
+        writeLog(LOG_TYPE_ERROR, std::string("Failed to save partial result: ") + e.what());
+    }
+    catch(...)
+    {
+        writeLog(LOG_TYPE_ERROR, "Failed to save partial result: unknown error");
+    }
+
     writeLog(LOG_TYPE_INFO, "Received signal. Exit right now.");
     logEOF();
 
@@ -492,7 +540,13 @@ int singleTest(nodeInfo &node)
     }
 
     printMsg(SPEEDTEST_MESSAGE_STARTPING, rpcmode, id);
-    if(speedtest_mode != "speedonly")
+    // UDP-only protocols (Hysteria2, TUIC, etc.) don't answer TCP SYN on the
+    // proxy port, so a TCP ping always reports 100% loss. Skip tcping for them
+    // and rely on the actual download attempt (through the local SOCKS5 port)
+    // to decide whether the node is alive. We measure ping later by timing the
+    // first proxied HTTP request.
+    bool is_udp_only = (node.linkType == SPEEDTEST_MESSAGE_FOUNDHY2);
+    if(speedtest_mode != "speedonly" && !is_udp_only)
     {
         writeLog(LOG_TYPE_INFO, "Now performing TCP ping...");
         retVal = tcping(node);
@@ -513,7 +567,11 @@ int singleTest(nodeInfo &node)
         writeLog(LOG_TYPE_INFO, "TCP Ping: " + node.avgPing + "  Packet Loss: " + node.pkLoss);
     }
     else
+    {
         node.pkLoss = "0.00%";
+        if(is_udp_only)
+            writeLog(LOG_TYPE_INFO, "Skipping TCP ping for UDP-only protocol (Hysteria2 etc).");
+    }
     printMsg(SPEEDTEST_MESSAGE_GOTPING, rpcmode, id, node.avgPing, node.pkLoss);
 
     getTestFile(node, proxy, downloadFiles, matchRules, def_test_file);
@@ -662,6 +720,12 @@ void addNodes(std::string link, bool multilink)
     writeLog(LOG_TYPE_INFO, "Received Link.");
     if(startsWith(link, "vmess://") || startsWith(link, "vmess1://"))
         linkType = SPEEDTEST_MESSAGE_FOUNDVMESS;
+    else if(startsWith(link, "vless://"))
+        linkType = SPEEDTEST_MESSAGE_FOUNDVLESS;
+    else if(startsWith(link, "hysteria2://") || startsWith(link, "hy2://"))
+        linkType = SPEEDTEST_MESSAGE_FOUNDHY2;
+    else if(startsWith(link, "anytls://"))
+        linkType = SPEEDTEST_MESSAGE_FOUNDANYTLS;
     else if(startsWith(link, "ss://"))
         linkType = SPEEDTEST_MESSAGE_FOUNDSS;
     else if(startsWith(link, "ssr://"))
@@ -972,20 +1036,22 @@ int main(int argc, char* argv[])
     }
     else if(allNodes.size() == 1)
     {
+        // single-node path doesn't go through batchTest(), so we need to
+        // initialize the result log path ourselves before testing — otherwise
+        // the signal handler (Ctrl+C) and the post-test save below would have
+        // nowhere to write.
+        resultInit();
         writeLog(LOG_TYPE_INFO, "Speedtest will now begin.");
         printMsg(SPEEDTEST_MESSAGE_BEGIN, rpcmode);
         singleTest(allNodes[0]);
-        if(single_test_force_export)
-        {
-            printMsg(SPEEDTEST_MESSAGE_PICSAVING, rpcmode);
-            writeLog(LOG_TYPE_INFO, "Now exporting result...");
-            curPNGPath = "results" PATH_SLASH + getTime(1) + ".png";
-            pngpath = exportRender(curPNGPath, allNodes, export_with_maxspeed, export_sort_method, export_color_style, export_as_new_style, test_nat_type);
-            printMsg(SPEEDTEST_MESSAGE_PICSAVED, rpcmode, pngpath);
-            writeLog(LOG_TYPE_INFO, "Result saved to " + pngpath + " .");
-            if(rpcmode)
-                printMsg(SPEEDTEST_MESSAGE_PICDATA, rpcmode, "data:image/png;base64," + fileToBase64(pngpath));
-        }
+        saveResult(allNodes);
+        printMsg(SPEEDTEST_MESSAGE_PICSAVING, rpcmode);
+        writeLog(LOG_TYPE_INFO, "Now exporting result...");
+        pngpath = exportRender(resultPath, allNodes, export_with_maxspeed, export_sort_method, export_color_style, export_as_new_style, test_nat_type);
+        printMsg(SPEEDTEST_MESSAGE_PICSAVED, rpcmode, pngpath);
+        writeLog(LOG_TYPE_INFO, "Result saved to " + pngpath + " .");
+        if(rpcmode)
+            printMsg(SPEEDTEST_MESSAGE_PICDATA, rpcmode, "data:image/png;base64," + fileToBase64(pngpath));
         writeLog(LOG_TYPE_INFO, "Single node test completed.");
     }
     else

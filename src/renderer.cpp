@@ -216,6 +216,10 @@ bool comparer(nodeInfo &a, nodeInfo &b)
         return getSpeed(a.avgSpeed) < getSpeed(b.avgSpeed);
     case "rspeed"_hash:
         return getSpeed(a.avgSpeed) > getSpeed(b.avgSpeed);
+    case "maxspeed"_hash:
+        return getSpeed(a.maxSpeed) < getSpeed(b.maxSpeed);
+    case "rmaxspeed"_hash:
+        return getSpeed(a.maxSpeed) > getSpeed(b.maxSpeed);
     case "ping"_hash:
         return stof(a.avgPing) < stof(b.avgPing);
     case "rping"_hash:

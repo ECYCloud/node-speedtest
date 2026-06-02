@@ -1172,16 +1172,17 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
         case "hy2"_hash:
         {
             group = HY2_DEFAULT_GROUP;
-            std::string hy_password, hy_sni, hy_obfs, hy_obfs_pass, hy_up, hy_down, hy_ports;
+            std::string hy_password, hy_sni, hy_obfs, hy_obfs_pass, hy_up, hy_down, hy_ports, hy_hop;
             singleproxy["password"] >>= hy_password;
             singleproxy["sni"] >>= hy_sni;
             singleproxy["ports"] >>= hy_ports;
+            singleproxy["hop-interval"] >>= hy_hop;
             singleproxy["obfs"] >>= hy_obfs;
             singleproxy["obfs-password"] >>= hy_obfs_pass;
             singleproxy["up"] >>= hy_up;
             singleproxy["down"] >>= hy_down;
             node.linkType = SPEEDTEST_MESSAGE_FOUNDHY2;
-            node.proxyStr = hysteria2Construct(group, ps, server, port, hy_ports, hy_password, hy_sni, hy_obfs, hy_obfs_pass, hy_up, hy_down, ech_server_name, udp, tfo, scv);
+            node.proxyStr = hysteria2Construct(group, ps, server, port, hy_ports, hy_password, hy_sni, hy_obfs, hy_obfs_pass, hy_up, hy_down, ech_server_name, udp, tfo, scv, hy_hop);
             break;
         }
         case "anytls"_hash:

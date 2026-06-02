@@ -108,11 +108,23 @@ jobs:
           ls -la build/
           file build/stairspeedtest.exe || true
 
+      - name: Stage exe + runtime DLLs into one folder
+        run: |
+          mkdir -p stage
+          cp build/stairspeedtest.exe stage/
+          # Copy every non-system DLL the exe imports, recursively, from /mingw64/bin
+          ldd build/stairspeedtest.exe \
+            | awk '{print $3}' \
+            | grep -i '^/mingw64/bin/' \
+            | sort -u \
+            | xargs -I{} cp {} stage/
+          ls -la stage/
+
       - name: Upload binary
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: stairspeedtest-windows-amd64
-          path: build/stairspeedtest.exe
+          path: stage/
           if-no-files-found: warn
           retention-days: 7

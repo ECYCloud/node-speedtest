@@ -955,6 +955,9 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
     std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
     std::string protocol, protoparam, obfs, obfsparam; //ssr
     std::string user; //socks
+    std::string flow, sni, encryption; //vless
+    std::string ports, hop_interval, obfs_password, up, down; //hysteria2
+    std::string ech_server_name; //ech
     tribool udp, tfo, scv;
     nodeInfo node;
     Node singleproxy;
@@ -971,6 +974,10 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
             continue;
         udp = safe_as<std::string>(singleproxy["udp"]);
         scv = safe_as<std::string>(singleproxy["skip-cert-verify"]);
+        // shared: ech-opts.query-server-name (mihomo style)
+        ech_server_name.clear();
+        if(singleproxy["ech-opts"].IsDefined() && safe_as<std::string>(singleproxy["ech-opts"]["enable"]) == "true")
+            singleproxy["ech-opts"]["query-server-name"] >>= ech_server_name;
         switch(hash_(proxytype))
         {
         case "vmess"_hash:
@@ -1106,13 +1113,87 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
             node.proxyStr = httpConstruct(group, ps, server, port, user, password, tls == "true", tfo, scv);
             break;
         case "trojan"_hash:
+        {
             group = TROJAN_DEFAULT_GROUP;
             singleproxy["password"] >>= password;
             singleproxy["sni"] >>= host;
+            std::string trojan_net, ws_path, ws_host;
+            if(singleproxy["network"].IsDefined())
+                singleproxy["network"] >>= trojan_net;
+            if(trojan_net == "ws" && singleproxy["ws-opts"].IsDefined())
+            {
+                singleproxy["ws-opts"]["path"] >>= ws_path;
+                if(singleproxy["ws-opts"]["headers"].IsDefined())
+                    singleproxy["ws-opts"]["headers"]["Host"] >>= ws_host;
+            }
+            else if(trojan_net == "grpc" && singleproxy["grpc-opts"].IsDefined())
+            {
+                singleproxy["grpc-opts"]["grpc-service-name"] >>= ws_path;
+            }
 
             node.linkType = SPEEDTEST_MESSAGE_FOUNDTROJAN;
-            node.proxyStr = trojanConstruct(group, ps, server, port, password, host, true, udp, tfo, scv);
+            node.proxyStr = trojanConstruct(group, ps, server, port, password, host, true, udp, tfo, scv, tribool(), trojan_net, ws_path, ws_host, ech_server_name);
             break;
+        }
+        case "vless"_hash:
+        {
+            group = VLESS_DEFAULT_GROUP;
+            std::string uuid_v, vless_net = "tcp", vless_sni, vless_path, vless_host, vless_security, vless_flow;
+            singleproxy["uuid"] >>= uuid_v;
+            if(singleproxy["network"].IsDefined())
+                singleproxy["network"] >>= vless_net;
+            if(singleproxy["servername"].IsDefined())
+                singleproxy["servername"] >>= vless_sni;
+            else if(singleproxy["sni"].IsDefined())
+                singleproxy["sni"] >>= vless_sni;
+            if(singleproxy["flow"].IsDefined())
+                singleproxy["flow"] >>= vless_flow;
+            // security: tls/reality/none. mihomo accepts a bool `tls:` field
+            // and an optional reality-opts block. We treat anything truthy as tls.
+            if(safe_as<std::string>(singleproxy["tls"]) == "true")
+                vless_security = "tls";
+            if(singleproxy["reality-opts"].IsDefined())
+                vless_security = "reality";
+            if(vless_net == "ws" && singleproxy["ws-opts"].IsDefined())
+            {
+                singleproxy["ws-opts"]["path"] >>= vless_path;
+                if(singleproxy["ws-opts"]["headers"].IsDefined())
+                    singleproxy["ws-opts"]["headers"]["Host"] >>= vless_host;
+            }
+            else if(vless_net == "grpc" && singleproxy["grpc-opts"].IsDefined())
+            {
+                singleproxy["grpc-opts"]["grpc-service-name"] >>= vless_path;
+            }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDVLESS;
+            node.proxyStr = vlessConstruct(group, ps, server, port, uuid_v, vless_flow, "none", vless_net, vless_security, vless_sni, vless_path, vless_host, ech_server_name, udp, tfo, scv);
+            break;
+        }
+        case "hysteria2"_hash:
+        case "hy2"_hash:
+        {
+            group = HY2_DEFAULT_GROUP;
+            std::string hy_password, hy_sni, hy_obfs, hy_obfs_pass, hy_up, hy_down, hy_ports;
+            singleproxy["password"] >>= hy_password;
+            singleproxy["sni"] >>= hy_sni;
+            singleproxy["ports"] >>= hy_ports;
+            singleproxy["obfs"] >>= hy_obfs;
+            singleproxy["obfs-password"] >>= hy_obfs_pass;
+            singleproxy["up"] >>= hy_up;
+            singleproxy["down"] >>= hy_down;
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDHY2;
+            node.proxyStr = hysteria2Construct(group, ps, server, port, hy_ports, hy_password, hy_sni, hy_obfs, hy_obfs_pass, hy_up, hy_down, ech_server_name, udp, tfo, scv);
+            break;
+        }
+        case "anytls"_hash:
+        {
+            group = ANYTLS_DEFAULT_GROUP;
+            std::string at_password, at_sni;
+            singleproxy["password"] >>= at_password;
+            singleproxy["sni"] >>= at_sni;
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDANYTLS;
+            node.proxyStr = anytlsConstruct(group, ps, server, port, at_password, at_sni, ech_server_name, udp, tfo, scv);
+            break;
+        }
         case "snell"_hash:
             group = SNELL_DEFAULT_GROUP;
             singleproxy["psk"] >> password;
@@ -1125,6 +1206,9 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
         default:
             continue;
         }
+        // Skip nodes whose Construct() returned empty (legacy SS / SSR / VMess / Snell stubs).
+        if(node.proxyStr.empty())
+            continue;
 
         node.group = group;
         node.remarks = ps;
@@ -1999,6 +2083,151 @@ int explodeConfContent(const std::string &content, const std::string &custom_por
         return SPEEDTEST_ERROR_NONE;
 }
 
+// -----------------------------------------------------------------------------
+// Single-link parsers for VLESS / Hysteria2 / AnyTLS.
+// All three follow the URI shape: scheme://<credential>@<host>:<port>?<query>#<remark>
+// -----------------------------------------------------------------------------
+
+// Strip "scheme://" prefix and split into (creds, host, port, query, remark).
+static bool splitProxyURI(const std::string &link, const std::string &scheme, std::string &creds, std::string &host, std::string &port, std::string &query, std::string &remark)
+{
+    if(!startsWith(link, scheme))
+        return false;
+    std::string body = link.substr(scheme.size());
+
+    string_size hash_pos = body.find('#');
+    if(hash_pos != body.npos)
+    {
+        remark = UrlDecode(body.substr(hash_pos + 1));
+        body = body.substr(0, hash_pos);
+    }
+    string_size q_pos = body.find('?');
+    if(q_pos != body.npos)
+    {
+        query = body.substr(q_pos + 1);
+        body = body.substr(0, q_pos);
+    }
+    string_size at_pos = body.rfind('@');
+    if(at_pos == body.npos)
+        return false;
+    creds = body.substr(0, at_pos);
+    std::string hostport = body.substr(at_pos + 1);
+
+    // host can be [IPv6]:port or host:port
+    if(!hostport.empty() && hostport[0] == '[')
+    {
+        string_size close = hostport.find(']');
+        if(close == hostport.npos)
+            return false;
+        host = hostport.substr(1, close - 1);
+        if(close + 1 < hostport.size() && hostport[close + 1] == ':')
+            port = hostport.substr(close + 2);
+    }
+    else
+    {
+        string_size colon = hostport.rfind(':');
+        if(colon == hostport.npos)
+            return false;
+        host = hostport.substr(0, colon);
+        port = hostport.substr(colon + 1);
+    }
+    return !host.empty() && !port.empty();
+}
+
+// Extract ech-server-name from a query "ech=" value such as
+// "cloudflare-ech.com+udp://1.1.1.1". The leading hostname is what mihomo's
+// query-server-name field expects.
+static std::string parseEchServerName(const std::string &raw)
+{
+    if(raw.empty()) return std::string();
+    std::string s = UrlDecode(raw);
+    string_size plus = s.find('+');
+    if(plus != s.npos) s = s.substr(0, plus);
+    return s;
+}
+
+void explodeVLESS(const std::string &link, const std::string &custom_port, nodeInfo &node)
+{
+    std::string creds, host, port, query, remark;
+    if(!splitProxyURI(link, "vless://", creds, host, port, query, remark))
+        return;
+    if(!custom_port.empty()) port = custom_port;
+
+    std::string uuid = UrlDecode(creds);
+    std::string security  = UrlDecode(getUrlArg(query, "security"));
+    std::string type      = UrlDecode(getUrlArg(query, "type"));
+    std::string sni       = UrlDecode(getUrlArg(query, "sni"));
+    if(sni.empty())       sni = UrlDecode(getUrlArg(query, "peer"));
+    std::string path      = UrlDecode(getUrlArg(query, "path"));
+    std::string ws_host   = UrlDecode(getUrlArg(query, "host"));
+    std::string flow      = UrlDecode(getUrlArg(query, "flow"));
+    std::string ech_sn    = parseEchServerName(getUrlArg(query, "ech"));
+    std::string scv_arg   = getUrlArg(query, "allowInsecure");
+    tribool scv;
+    if(!scv_arg.empty()) scv = (scv_arg == "1" || scv_arg == "true");
+
+    if(remark.empty()) remark = host + ":" + port;
+    node.linkType = SPEEDTEST_MESSAGE_FOUNDVLESS;
+    node.group = VLESS_DEFAULT_GROUP;
+    node.remarks = remark;
+    node.server = host;
+    node.port = (unsigned short)to_int(port, 1);
+    node.proxyStr = vlessConstruct(VLESS_DEFAULT_GROUP, remark, host, port, uuid, flow, "none", type.empty() ? "tcp" : type, security, sni, path, ws_host, ech_sn, tribool(), tribool(), scv);
+}
+
+void explodeHysteria2(const std::string &link, const std::string &custom_port, nodeInfo &node)
+{
+    std::string creds, host, port, query, remark;
+    std::string scheme = startsWith(link, "hysteria2://") ? "hysteria2://" : "hy2://";
+    if(!splitProxyURI(link, scheme, creds, host, port, query, remark))
+        return;
+    if(!custom_port.empty()) port = custom_port;
+
+    std::string password = UrlDecode(creds);
+    std::string sni      = UrlDecode(getUrlArg(query, "sni"));
+    if(sni.empty())      sni = UrlDecode(getUrlArg(query, "peer"));
+    std::string obfs     = UrlDecode(getUrlArg(query, "obfs"));
+    std::string obfsPass = UrlDecode(getUrlArg(query, "obfs-password"));
+    std::string up       = UrlDecode(getUrlArg(query, "up"));
+    std::string down     = UrlDecode(getUrlArg(query, "down"));
+    std::string ports    = UrlDecode(getUrlArg(query, "mport")); // some clients
+    std::string ech_sn   = parseEchServerName(getUrlArg(query, "ech"));
+    std::string scv_arg  = getUrlArg(query, "insecure");
+    tribool scv;
+    if(!scv_arg.empty()) scv = (scv_arg == "1" || scv_arg == "true");
+
+    if(remark.empty()) remark = host + ":" + port;
+    node.linkType = SPEEDTEST_MESSAGE_FOUNDHY2;
+    node.group = HY2_DEFAULT_GROUP;
+    node.remarks = remark;
+    node.server = host;
+    node.port = (unsigned short)to_int(port, 1);
+    node.proxyStr = hysteria2Construct(HY2_DEFAULT_GROUP, remark, host, port, ports, password, sni, obfs, obfsPass, up, down, ech_sn, tribool(), tribool(), scv);
+}
+
+void explodeAnyTLS(const std::string &link, const std::string &custom_port, nodeInfo &node)
+{
+    std::string creds, host, port, query, remark;
+    if(!splitProxyURI(link, "anytls://", creds, host, port, query, remark))
+        return;
+    if(!custom_port.empty()) port = custom_port;
+
+    std::string password = UrlDecode(creds);
+    std::string sni      = UrlDecode(getUrlArg(query, "sni"));
+    std::string ech_sn   = parseEchServerName(getUrlArg(query, "ech"));
+    std::string scv_arg  = getUrlArg(query, "insecure");
+    tribool scv;
+    if(!scv_arg.empty()) scv = (scv_arg == "1" || scv_arg == "true");
+
+    if(remark.empty()) remark = host + ":" + port;
+    node.linkType = SPEEDTEST_MESSAGE_FOUNDANYTLS;
+    node.group = ANYTLS_DEFAULT_GROUP;
+    node.remarks = remark;
+    node.server = host;
+    node.port = (unsigned short)to_int(port, 1);
+    node.proxyStr = anytlsConstruct(ANYTLS_DEFAULT_GROUP, remark, host, port, password, sni, ech_sn, tribool(), tribool(), scv);
+}
+
 void explode(const std::string &link, bool sslibev, bool ssrlibev, const std::string &custom_port, nodeInfo &node)
 {
     // TODO: replace strFind with startsWith if appropriate
@@ -2006,6 +2235,12 @@ void explode(const std::string &link, bool sslibev, bool ssrlibev, const std::st
         explodeSSR(link, sslibev, ssrlibev, custom_port, node);
     else if(strFind(link, "vmess://") || strFind(link, "vmess1://"))
         explodeVmess(link, custom_port, node);
+    else if(strFind(link, "vless://"))
+        explodeVLESS(link, custom_port, node);
+    else if(strFind(link, "hysteria2://") || strFind(link, "hy2://"))
+        explodeHysteria2(link, custom_port, node);
+    else if(strFind(link, "anytls://"))
+        explodeAnyTLS(link, custom_port, node);
     else if(strFind(link, "ss://"))
         explodeSS(link, sslibev, custom_port, node);
     else if(strFind(link, "socks://") || strFind(link, "https://t.me/socks") || strFind(link, "tg://socks"))

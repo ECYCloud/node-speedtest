@@ -8,20 +8,81 @@
 
 extern int socksport;
 
-std::string base_ss_win = R"({"version":"4.1.6","configs":[?config?],"strategy":null,"index":0,"global":false,"enabled":false,"shareOverLan":true,"isDefault":false,"localPort":?localport?,"portableMode":true,"pacUrl":null,"useOnlinePac":false,"secureLocalPac":true,"availabilityStatistics":false,"autoCheckUpdate":true,"checkPreRelease":false,"isVerboseLogging":false,"logViewer":{"topMost":false,"wrapText":false,"toolbarShown":false,"Font":"Consolas, 8pt","BackgroundColor":"Black","TextColor":"White"},"proxy":{"useProxy":false,"proxyType":0,"proxyServer":"","proxyPort":0,"proxyTimeout":3,"useAuth":false,"authUser":"","authPwd":""},"hotkey":{"SwitchSystemProxy":"","SwitchSystemProxyMode":"","SwitchAllowLan":"","ShowLogs":"","ServerMoveUp":"","ServerMoveDown":"","RegHotkeysAtStartup":false}})";
-std::string config_ss_win = R"({"server":"?server?","server_port":?port?,"password":"?password?","method":"?method?","plugin":"?plugin?","plugin_opts":"?plugin_opts?","plugin_args":"","remarks":"?remarks?","timeout":5})";
-std::string config_ss_libev = R"({"server":"?server?","server_port":?port?,"password":"?password?","method":"?method?","plugin":"?plugin?","plugin_opts":"?plugin_opts?","plugin_args":"","local_address":"127.0.0.1","local_port":?localport?,"reuse_port":true})";
-std::string base_ssr_win = R"({"configs":[?config?],"index":0,"random":true,"sysProxyMode":1,"shareOverLan":false,"localPort":?localport?,"localAuthPassword":null,"localDnsServer":"","dnsServer":"","reconnectTimes":2,"balanceAlgorithm":"LowException","randomInGroup":false,"TTL":0,"connectTimeout":5,"proxyRuleMode":2,"proxyEnable":false,"pacDirectGoProxy":false,"proxyType":0,"proxyHost":null,"proxyPort":0,"proxyAuthUser":null,"proxyAuthPass":null,"proxyUserAgent":null,"authUser":null,"authPass":null,"autoBan":false,"checkSwitchAutoCloseAll":false,"logEnable":false,"sameHostForSameTarget":false,"keepVisitTime":180,"isHideTips":false,"nodeFeedAutoUpdate":true,"serverSubscribes":[],"token":{},"portMap":{}})";
-std::string config_ssr_win = R"({"remarks":"?remarks?","id":"18C4949EBCFE46687AE4A7645725D35F","server":"?server?","server_port":?port?,"server_udp_port":0,"password":"?password?","method":"?method?","protocol":"?protocol?","protocolparam":"?protoparam?","obfs":"?obfs?","obfsparam":"?obfsparam?","remarks_base64":"?remarks_base64?","group":"?group?","enable":true,"udp_over_tcp":false})";
-std::string config_ssr_libev = R"({"server":"?server?","server_port":?port?,"protocol":"?protocol?","method":"?method?","obfs":"?obfs?","password":"?password?","obfs_param":"?obfsparam?","protocol_param":"?protoparam?","local_address":"127.0.0.1","local_port":?localport?,"reuse_port":true})";
-std::string base_vmess = R"({"inbounds":[{"port":?localport?,"listen":"127.0.0.1","protocol":"socks","settings":{"udp":true}}],"outbounds":[{"tag":"proxy","protocol":"vmess","settings":{"vnext":[{"address":"?add?","port":?port?,"users":[{"id":"?id?","alterId":?aid?,"email":"t@t.tt","security":"?cipher?"}]}]},"streamSettings":{"network":"?net?","security":"?tls?","tlsSettings":?tlsset?,"tcpSettings":?tcpset?,"wsSettings":?wsset?,"kcpSettings":?kcpset?,"httpSettings":?h2set?,"quicSettings":?quicset?},"mux":{"enabled":false}}],"routing":{"domainStrategy":"IPIfNonMatch"}})";
-std::string wsset_vmess = R"({"connectionReuse":true,"path":"?path?","headers":{"Host":"?host?"?edge?}})";
-std::string tcpset_vmess = R"({"connectionReuse":true,"header":{"type":"?type?","request":{"version":"1.1","method":"GET","path":["?path?"],"headers":{"Host":["?host?"],"User-Agent":["Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.75 Safari/537.36","Mozilla/5.0 (iPhone; CPU iPhone OS 10_0_2 like Mac OS X) AppleWebKit/601.1 (KHTML, like Gecko) CriOS/53.0.2785.109 Mobile/14A456 Safari/601.1.46"],"Accept-Encoding":["gzip, deflate"],"Connection":["keep-alive"],"Pragma":"no-cache"}}}})";
-std::string tlsset_vmess = R"({"serverName":"?serverName?","allowInsecure":?verify?,"allowInsecureCiphers":true})";
-std::string kcpset_vmess = R"({"mtu":1350,"tti":50,"uplinkCapacity":12,"downlinkCapacity":100,"congestion":false,"readBufferSize":2,"writeBufferSize":2,"header":{"type":"?type?"}})";
-std::string h2set_vmess = R"({"path":"?path?","host":[?host?]})";
-std::string quicset_vmess = R"({"security":"?host?","key":"?path?","header":{"type":"?type?"}})";
-std::string base_trojan = R"({"run_type":"client","local_addr":"127.0.0.1","local_port":?localport?,"remote_addr":"?server?","remote_port":?port?,"password":["?password?"],"ssl":{"verify":?verify?,"verify_hostname":?verifyhost?,"sni":"?host?"},"tcp":{"reuse_port":true}})";
+// =============================================================================
+// mihomo (Clash.Meta) single-node YAML config templates.
+//
+// Each *Construct() returns a complete mihomo config file content with exactly
+// one outbound named "node", consumed by `mihomo -d . -f config.yaml`.
+// Legacy SS / SSR / VMess / Snell remain only as empty stubs so the rest of
+// the codebase still links; they should never be reached because explodeClash
+// only emits VLESS / Trojan / Hysteria2 / AnyTLS nodes.
+// =============================================================================
+
+// YAML header shared by every generated config. socksport is substituted in.
+static std::string mihomoHeader()
+{
+    return std::string()
+        + "mixed-port: 0\n"
+        + "socks-port: " + std::to_string(socksport) + "\n"
+        + "allow-lan: false\n"
+        + "bind-address: '127.0.0.1'\n"
+        + "mode: global\n"
+        + "log-level: silent\n"
+        + "ipv6: true\n"
+        + "external-controller: '127.0.0.1:9990'\n"
+        + "secret: ''\n"
+        + "geodata-mode: false\n"
+        + "geo-auto-update: false\n"
+        + "profile:\n"
+        + "  store-selected: false\n"
+        + "  store-fake-ip: false\n"
+        + "dns:\n"
+        + "  enable: true\n"
+        + "  ipv6: true\n"
+        + "  enhanced-mode: redir-host\n"
+        + "  default-nameserver: [119.29.29.29, 223.5.5.5]\n"
+        + "  nameserver: [119.29.29.29, 223.5.5.5]\n"
+        + "  proxy-server-nameserver: [119.29.29.29, 223.5.5.5]\n"
+        + "proxies:\n";
+}
+
+// proxy-groups + tail. The selector is named GLOBAL; in mode: global mihomo
+// routes every connection through the proxy chosen here.
+static std::string mihomoTail()
+{
+    return std::string()
+        + "proxy-groups:\n"
+        + "  - {name: GLOBAL, type: select, proxies: [node]}\n";
+}
+
+// YAML-escape a scalar that will appear inside single quotes.
+static std::string yamlEscape(const std::string &s)
+{
+    std::string out;
+    out.reserve(s.size() + 8);
+    for(char c : s)
+    {
+        if(c == '\'')
+            out += "''";
+        else
+            out += c;
+    }
+    return out;
+}
+
+// Build a quoted scalar; if input is empty return empty quoted string.
+static std::string yq(const std::string &s) { return "'" + yamlEscape(s) + "'"; }
+
+// Common ECH block. Uses query-server-name semantic from user's subscription.
+static std::string echBlock(const std::string &ech_server_name, const std::string &indent)
+{
+    if(ech_server_name.empty())
+        return std::string();
+    return indent + "ech-opts:\n"
+         + indent + "  enable: true\n"
+         + indent + "  query-server-name: " + yq(ech_server_name) + "\n";
+}
+
 
 int explodeLog(const std::string &log, std::vector<nodeInfo> &nodes)
 {
@@ -75,161 +136,184 @@ std::string replace_first(std::string str, const std::string &old_value, const s
 
 std::string vmessConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &type, const std::string &id, const std::string &aid, const std::string &net, const std::string &cipher, const std::string &path, const std::string &host, const std::string &edge, const std::string &tls, tribool udp, tribool tfo, tribool scv, tribool tls13)
 {
-    std::string base = base_vmess;
-    base = replace_first(base, "?localport?", std::to_string(socksport));
-    base = replace_first(base, "?add?", add);
-    base = replace_first(base, "?port?", port);
-    base = replace_first(base, "?id?", id);
-    base = replace_first(base, "?aid?", aid.empty() ? "0" : aid);
-    base = replace_first(base, "?net?", net.empty() ? "tcp" : net);
-    base = replace_first(base, "?cipher?", cipher);
-    switch(hash_(net))
-    {
-        case "ws"_hash:
-        {
-            std::string wsset = wsset_vmess;
-            wsset = replace_first(wsset, "?host?", (host.empty() && !isIPv4(add) && !isIPv6(add)) ? add : trim(host));
-            wsset = replace_first(wsset, "?path?", path.empty() ? "/" : path);
-            wsset = replace_first(wsset, "?edge?", edge.empty() ? "" : ",\"Edge\":\"" + edge + "\"");
-            base = replace_first(base, "?wsset?", wsset);
-            break;
-        }
-        case "kcp"_hash:
-        {
-            std::string kcpset = kcpset_vmess;
-            kcpset = replace_first(kcpset, "?type?", type);
-            base = replace_first(base, "?kcpset?", kcpset);
-            break;
-        }
-        case "h2"_hash:
-        case "http"_hash:
-        {
-            std::string h2set = h2set_vmess;
-            h2set = replace_first(h2set, "?path?", path);
-            string_array hosts = split(host, ",");
-            h2set = replace_first(h2set, "?host?", std::accumulate(std::next(hosts.begin()), hosts.end(), std::string("\"" + hosts[0] + "\""), [](auto before, auto current){ return before + ",\"" + current + "\""; }));
-            base = replace_first(base, "?h2set?", h2set);
-            break;
-        }
-        case "quic"_hash:
-        {
-            std::string quicset = quicset_vmess;
-            quicset = replace_first(quicset, "?host?", host);
-            quicset = replace_first(quicset, "?path?", path);
-            quicset = replace_first(quicset, "?type?", type);
-            base = replace_first(base, "?quicset?", quicset);
-            break;
-        }
-        case "tcp"_hash:
-            break;
-    }
-    if(type == "http")
-    {
-        std::string tcpset = tcpset_vmess;
-        tcpset = replace_first(tcpset, "?host?", (host.empty() && !isIPv4(add) && !isIPv6(add)) ? add : trim(host));
-        tcpset = replace_first(tcpset, "?type?", type);
-        tcpset = replace_first(tcpset, "?path?", path.empty() ? "/" : path);
-        base = replace_first(base, "?tcpset?", tcpset);
-    }
-    if(host.size())
-    {
-        std::string tlsset = tlsset_vmess;
-        tlsset = replace_first(tlsset, "?serverName?", host);
-        scv.define(true);
-        tlsset = replace_first(tlsset, "?verify?", scv ? "true" : "false");
-        base = replace_first(base, "?tlsset?", tlsset);
-    }
-
-    base = replace_first(base, "?tls?", tls);
-    base = replace_first(base, "?tcpset?", "null");
-    base = replace_first(base, "?wsset?", "null");
-    base = replace_first(base, "?tlsset?", "null");
-    base = replace_first(base, "?kcpset?", "null");
-    base = replace_first(base, "?h2set?", "null");
-    base = replace_first(base, "?quicset?", "null");
-
-    return base;
+    // VMess support intentionally disabled in mihomo-only build.
+    (void)group; (void)remarks; (void)add; (void)port; (void)type;
+    (void)id; (void)aid; (void)net; (void)cipher; (void)path;
+    (void)host; (void)edge; (void)tls; (void)udp; (void)tfo;
+    (void)scv; (void)tls13;
+    return std::string();
 }
 
 std::string ssrConstruct(const std::string &group, const std::string &remarks, const std::string &remarks_base64, const std::string &server, const std::string &port, const std::string &protocol, const std::string &method, const std::string &obfs, const std::string &password, const std::string &obfsparam, const std::string &protoparam, bool libev, tribool udp, tribool tfo, tribool scv)
 {
-    std::string base = base_ssr_win;
-    std::string config = config_ssr_win;
-    std::string config_libev = config_ssr_libev;
-    if(libev == true)
-        config = config_libev;
-    config = replace_first(config, "?group?", group);
-    config = replace_first(config, "?remarks?", remarks);
-    if(remarks_base64.empty())
-        config = replace_first(config, "?remarks_base64?", base64_encode(remarks));
-    else
-        config = replace_first(config, "?remarks_base64?", remarks_base64);
-    config = replace_first(config, "?server?", isIPv6(server) ? "[" + server + "]" : server);
-    config = replace_first(config, "?port?", port);
-    config = replace_first(config, "?protocol?", protocol);
-    config = replace_first(config, "?method?", method);
-    config = replace_first(config, "?obfs?", obfs);
-    config = replace_first(config, "?password?", password);
-    config = replace_first(config, "?obfsparam?", obfsparam);
-    config = replace_first(config, "?protoparam?", protoparam);
-    if(libev == true)
-        base = config;
-    else
-        base = replace_first(base, "?config?", config);
-    base = replace_first(base, "?localport?", std::to_string(socksport));
-
-    return base;
+    // ShadowsocksR intentionally disabled in mihomo-only build.
+    (void)group; (void)remarks; (void)remarks_base64; (void)server; (void)port;
+    (void)protocol; (void)method; (void)obfs; (void)password; (void)obfsparam;
+    (void)protoparam; (void)libev; (void)udp; (void)tfo; (void)scv;
+    return std::string();
 }
 
 std::string ssConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &method, const std::string &plugin, const std::string &pluginopts, bool libev, tribool udp, tribool tfo, tribool scv, tribool tls13)
 {
-    std::string base = base_ss_win;
-    std::string config = config_ss_win;
-    std::string config_libev = config_ss_libev;
-    if(libev == true)
-        config = config_libev;
-    config = replace_first(config, "?server?", isIPv6(server) ? "[" + server + "]" : server);
-    config = replace_first(config, "?port?", port);
-    config = replace_first(config, "?password?", password);
-    config = replace_first(config, "?method?", method);
-    config = replace_first(config, "?plugin?", plugin.size() ? "./" + (plugin == "obfs-local" ? "simple-obfs" : plugin) : "");
-    config = replace_first(config, "?plugin_opts?", pluginopts);
-    config = replace_first(config, "?remarks?", remarks);
-    if(libev == true)
-        base = config;
-    else
-        base = replace_first(base, "?config?", config);
-    base = replace_first(base, "?localport?", std::to_string(socksport));
-
-    return base;
+    // Shadowsocks intentionally disabled in mihomo-only build.
+    (void)group; (void)remarks; (void)server; (void)port; (void)password;
+    (void)method; (void)plugin; (void)pluginopts; (void)libev; (void)udp;
+    (void)tfo; (void)scv; (void)tls13;
+    return std::string();
 }
 
 std::string socksConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &username, const std::string &password, tribool udp, tribool tfo, tribool scv)
 {
+    // SOCKS5 nodes connect to upstream directly without a local kernel.
+    (void)group; (void)remarks; (void)server; (void)port;
+    (void)udp; (void)tfo; (void)scv;
     return "user=" + username + "&pass=" + password;
 }
 
 std::string httpConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &username, const std::string &password, bool tls, tribool tfo, tribool scv, tribool tls13)
 {
+    // HTTP/HTTPS proxy nodes connect upstream directly without a local kernel.
+    (void)group; (void)remarks; (void)server; (void)port; (void)tls;
+    (void)tfo; (void)scv; (void)tls13;
     return "user=" + username + "&pass=" + password;
 }
 
-std::string trojanConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &host, bool tlssecure, tribool udp, tribool tfo, tribool scv, tribool tls13)
+std::string trojanConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &host, bool tlssecure, tribool udp, tribool tfo, tribool scv, tribool tls13, const std::string &network, const std::string &ws_path, const std::string &ws_host, const std::string &ech_server_name)
 {
-    std::string base = base_trojan;
-    scv.define(true);
-    base = replace_first(base, "?server?", server);
-    base = replace_first(base, "?port?", port);
-    base = replace_first(base, "?password?", password);
-    base = replace_first(base, "?verify?", scv ? "false" : "true");
-    base = replace_first(base, "?verifyhost?", scv ? "false" : "true");
-    base = replace_first(base, "?host?", host);
-    base = replace_first(base, "?localport?", std::to_string(socksport));
-    return base;
+    (void)group; (void)remarks; (void)tfo; (void)tls13;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: trojan\n";
+    out += "    server: " + yq(server) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    password: " + yq(password) + "\n";
+    if(!host.empty())
+        out += "    sni: " + yq(host) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
+    if(!tlssecure)
+        out += "    tls: false\n";
+    if(!network.empty() && network != "tcp")
+    {
+        out += "    network: " + network + "\n";
+        if(network == "ws")
+        {
+            out += "    ws-opts:\n";
+            out += "      path: " + yq(ws_path.empty() ? std::string("/") : ws_path) + "\n";
+            if(!ws_host.empty())
+            {
+                out += "      headers:\n";
+                out += "        Host: " + yq(ws_host) + "\n";
+            }
+        }
+        else if(network == "grpc")
+        {
+            out += "    grpc-opts:\n";
+            out += "      grpc-service-name: " + yq(ws_path) + "\n";
+        }
+    }
+    out += echBlock(ech_server_name, "    ");
+    out += mihomoTail();
+    return out;
 }
 
 std::string snellConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &obfs, const std::string &host, tribool udp, tribool tfo, tribool scv)
 {
-    //no clients available, ignore
+    // Snell is no longer supported in mihomo-only build.
+    (void)group; (void)remarks; (void)server; (void)port; (void)password;
+    (void)obfs; (void)host; (void)udp; (void)tfo; (void)scv;
     return std::string();
+}
+
+// -----------------------------------------------------------------------------
+// New protocols supported by the mihomo kernel.
+// -----------------------------------------------------------------------------
+
+std::string vlessConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &uuid, const std::string &flow, const std::string &encryption, const std::string &network, const std::string &security, const std::string &sni, const std::string &path, const std::string &host, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv)
+{
+    (void)group; (void)remarks; (void)encryption; (void)tfo;
+    std::string net = network.empty() ? std::string("tcp") : network;
+    bool useTLS = (security == "tls" || security == "reality" || security == "xtls");
+
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: vless\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    uuid: " + yq(uuid) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    if(!flow.empty())
+        out += "    flow: " + yq(flow) + "\n";
+    out += std::string("    tls: ") + (useTLS ? "true" : "false") + "\n";
+    if(!sni.empty())
+        out += "    servername: " + yq(sni) + "\n";
+    out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
+    out += "    network: " + net + "\n";
+    if(net == "ws")
+    {
+        out += "    ws-opts:\n";
+        out += "      path: " + yq(path.empty() ? std::string("/") : path) + "\n";
+        if(!host.empty())
+        {
+            out += "      headers:\n";
+            out += "        Host: " + yq(host) + "\n";
+        }
+    }
+    else if(net == "grpc")
+    {
+        out += "    grpc-opts:\n";
+        out += "      grpc-service-name: " + yq(path) + "\n";
+    }
+    out += echBlock(ech_server_name, "    ");
+    out += mihomoTail();
+    return out;
+}
+
+std::string hysteria2Construct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &ports, const std::string &password, const std::string &sni, const std::string &obfs, const std::string &obfsPassword, const std::string &up, const std::string &down, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv)
+{
+    (void)group; (void)remarks; (void)tfo;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: hysteria2\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    if(!ports.empty())
+        out += "    ports: " + yq(ports) + "\n";
+    out += "    password: " + yq(password) + "\n";
+    if(!sni.empty())
+        out += "    sni: " + yq(sni) + "\n";
+    if(!obfs.empty())
+    {
+        out += "    obfs: " + yq(obfs) + "\n";
+        if(!obfsPassword.empty())
+            out += "    obfs-password: " + yq(obfsPassword) + "\n";
+    }
+    if(!up.empty())
+        out += "    up: " + yq(up) + "\n";
+    if(!down.empty())
+        out += "    down: " + yq(down) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
+    out += echBlock(ech_server_name, "    ");
+    out += mihomoTail();
+    return out;
+}
+
+std::string anytlsConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &password, const std::string &sni, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv)
+{
+    (void)group; (void)remarks; (void)tfo;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: anytls\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    password: " + yq(password) + "\n";
+    out += "    client-fingerprint: chrome\n";
+    if(!sni.empty())
+        out += "    sni: " + yq(sni) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
+    out += echBlock(ech_server_name, "    ");
+    out += mihomoTail();
+    return out;
 }

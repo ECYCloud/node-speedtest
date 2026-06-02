@@ -1,0 +1,33 @@
+# Build artifacts
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+*.a
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+build/
+out/
+
+# Bundled mihomo kernel (downloaded separately, too large for git)
+base/tools/clients/
+
+# Test fixtures with real subscription / node credentials (DO NOT COMMIT)
+sub_test.yaml
+test/expected-*-node.yaml
+
+# Speedtest runtime output
+config.yaml
+config.json
+results/
+
+# Editor / OS junk
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

@@ -75,7 +75,11 @@ bool single_test_force_export = false;
 bool verbose = false;
 std::string export_sort_method = "none";
 
-int avail_status[5] = {0, 0, 0, 0, 0};
+// Indexed by SPEEDTEST_MESSAGE_FOUND* enum values; sized to comfortably cover
+// the largest *FOUND* value (currently SPEEDTEST_MESSAGE_FOUNDANYTLS which sits
+// just below SPEEDTEST_MESSAGE_EOF). Enlarging it is cheap and prevents OOB
+// access in singleTest() when a node's linkType is one of the new protocols.
+int avail_status[64] = {};
 unsigned int node_count = 0;
 int curGroupID = 0;
 
@@ -160,214 +164,50 @@ void copyNodesWithGroupID(std::vector<nodeInfo> &source, std::vector<nodeInfo> &
 void clientCheck()
 {
 #ifdef _WIN32
-    std::string v2core_path = "tools\\clients\\v2ray.exe";
-    std::string ssr_libev_path = "tools\\clients\\ssr-local.exe";
-    std::string ss_libev_path = "tools\\clients\\ss-local.exe";
-    std::string trojan_path = "tools\\clients\\trojan.exe";
+    std::string mihomo_path = "tools\\clients\\mihomo.exe";
 #else
-    std::string v2core_path = "tools/clients/v2ray";
-    std::string ssr_libev_path = "tools/clients/ssr-local";
-    std::string ss_libev_path = "tools/clients/ss-local";
-    std::string trojan_path = "tools/clients/trojan";
+    std::string mihomo_path = "tools/clients/mihomo";
 #endif // _WIN32
 
-    if(fileExist(v2core_path))
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDVMESS] = 1;
-        writeLog(LOG_TYPE_INFO, "Found V2Ray core at path " + v2core_path);
-    }
+    int status = fileExist(mihomo_path) ? 1 : 0;
+    if(status)
+        writeLog(LOG_TYPE_INFO, "Found mihomo core at path " + mihomo_path);
     else
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDVMESS] = 0;
-        writeLog(LOG_TYPE_WARN, "V2Ray core not found at path " + v2core_path);
-    }
-    if(fileExist(ss_libev_path))
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDSS] = 1;
-        writeLog(LOG_TYPE_INFO, "Found Shadowsocks-libev at path " + ss_libev_path);
-    }
-    else
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDSS] = 0;
-        writeLog(LOG_TYPE_WARN, "Shadowsocks-libev not found at path " + ss_libev_path);
-    }
-    if(fileExist(ssr_libev_path))
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDSSR] = 1;
-        writeLog(LOG_TYPE_INFO, "Found ShadowsocksR-libev at path " + ssr_libev_path);
-    }
-    else
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDSSR] = 0;
-        writeLog(LOG_TYPE_WARN, "ShadowsocksR-libev not found at path " + ssr_libev_path);
-    }
-    if(fileExist(trojan_path))
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDTROJAN] = 1;
-        writeLog(LOG_TYPE_INFO, "Found Trojan at path " + trojan_path);
-    }
-    else
-    {
-        avail_status[SPEEDTEST_MESSAGE_FOUNDTROJAN] = 0;
-        writeLog(LOG_TYPE_WARN, "Trojan not found at path " + trojan_path);
-    }
+        writeLog(LOG_TYPE_WARN, "mihomo core not found at path " + mihomo_path);
+
+    // All proxy-protocol slots map to the single mihomo binary now.
+    avail_status[SPEEDTEST_MESSAGE_FOUNDVMESS]   = status;
+    avail_status[SPEEDTEST_MESSAGE_FOUNDSS]      = status;
+    avail_status[SPEEDTEST_MESSAGE_FOUNDSSR]     = status;
+    avail_status[SPEEDTEST_MESSAGE_FOUNDTROJAN]  = status;
+    avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS]   = status;
+    avail_status[SPEEDTEST_MESSAGE_FOUNDHY2]     = status;
+    avail_status[SPEEDTEST_MESSAGE_FOUNDANYTLS]  = status;
 }
 
 int runClient(int client)
 {
+    (void)client;
 #ifdef _WIN32
-    std::string v2core_path = "tools\\clients\\v2ray.exe -config config.json";
-    std::string ssr_libev_path = "tools\\clients\\ssr-local.exe -u -c config.json";
-
-    std::string ss_libev_dir = "tools\\clients\\";
-    std::string ss_libev_path = ss_libev_dir + "ss-local.exe -u -c ..\\..\\config.json";
-
-    std::string ssr_win_dir = "tools\\clients\\";
-    std::string ssr_win_path = ssr_win_dir + "shadowsocksr-win.exe";
-    std::string ss_win_dir = "tools\\clients\\";
-    std::string ss_win_path = ss_win_dir + "shadowsocks-win.exe";
-
-    std::string trojan_path = "tools\\clients\\trojan.exe -c config.json";
-
-    switch(client)
-    {
-    case SPEEDTEST_MESSAGE_FOUNDVMESS:
-        writeLog(LOG_TYPE_INFO, "Starting up v2ray core...");
-        runProgram(v2core_path, "", false);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSSR:
-        if(ssr_libev)
-        {
-            writeLog(LOG_TYPE_INFO, "Starting up shadowsocksr-libev...");
-            runProgram(ssr_libev_path, "", false);
-        }
-        else
-        {
-            writeLog(LOG_TYPE_INFO, "Starting up shadowsocksr-win...");
-            fileCopy("config.json", ssr_win_dir + "gui-config.json");
-            runProgram(ssr_win_path, "", false);
-        }
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSS:
-        if(ss_libev)
-        {
-            writeLog(LOG_TYPE_INFO, "Starting up shadowsocks-libev...");
-            runProgram(ss_libev_path, ss_libev_dir, false);
-        }
-        else
-        {
-            writeLog(LOG_TYPE_INFO, "Starting up shadowsocks-win...");
-            fileCopy("config.json", ss_win_dir + "gui-config.json");
-            runProgram(ss_win_path, ss_win_dir, false);
-        }
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDTROJAN:
-        writeLog(LOG_TYPE_INFO, "Starting up trojan...");
-        runProgram(trojan_path, "", false);
-        break;
-    }
+    std::string mihomo_cmd = "tools\\clients\\mihomo.exe -d . -f config.yaml";
 #else
-    std::string v2core_path = "tools/clients/v2ray -config config.json";
-    std::string ssr_libev_path = "tools/clients/ssr-local -u -c config.json";
-    std::string trojan_path = "tools/clients/trojan -c config.json";
-
-    std::string ss_libev_dir = "tools/clients/";
-    std::string ss_libev_path = "./ss-local -u -c ../../config.json";
-
-    switch(client)
-    {
-    case SPEEDTEST_MESSAGE_FOUNDVMESS:
-        writeLog(LOG_TYPE_INFO, "Starting up v2ray core...");
-        runProgram(v2core_path, "", false);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSSR:
-        writeLog(LOG_TYPE_INFO, "Starting up shadowsocksr-libev...");
-        runProgram(ssr_libev_path, "", false);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSS:
-        writeLog(LOG_TYPE_INFO, "Starting up shadowsocks-libev...");
-        runProgram(ss_libev_path, ss_libev_dir, false);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDTROJAN:
-        writeLog(LOG_TYPE_INFO, "Starting up trojan...");
-        runProgram(trojan_path, "", false);
-        break;
-    }
+    std::string mihomo_cmd = "tools/clients/mihomo -d . -f config.yaml";
 #endif // _WIN32
+    writeLog(LOG_TYPE_INFO, "Starting up mihomo core...");
+    runProgram(mihomo_cmd, "", false);
     return 0;
 }
 
 int killClient(int client)
 {
+    (void)client;
 #ifdef _WIN32
-    std::string v2core_name = "v2ray.exe";
-    std::string ss_libev_name = "ss-local.exe";
-    std::string ssr_libev_name = "ssr-local.exe";
-    std::string ss_win_name = "shadowsocks-win.exe";
-    std::string ssr_win_name = "shadowsocksr-win.exe";
-    std::string trojan_name = "trojan.exe";
-
-    switch(client)
-    {
-    case SPEEDTEST_MESSAGE_FOUNDVMESS:
-        writeLog(LOG_TYPE_INFO, "Killing v2ray core...");
-        killProgram(v2core_name);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSSR:
-        if(ssr_libev)
-        {
-            writeLog(LOG_TYPE_INFO, "Killing shadowsocksr-libev...");
-            killProgram(ssr_libev_name);
-        }
-        else
-        {
-            writeLog(LOG_TYPE_INFO, "Killing shadowsocksr-win...");
-            killProgram(ssr_win_name);
-        }
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSS:
-        if(ss_libev)
-        {
-            writeLog(LOG_TYPE_INFO, "Killing shadowsocks-libev...");
-            killProgram(ss_libev_name);
-        }
-        else
-        {
-            writeLog(LOG_TYPE_INFO, "Killing shadowsocks-win...");
-            killProgram(ss_win_name);
-        }
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDTROJAN:
-        writeLog(LOG_TYPE_INFO, "Killing trojan...");
-        killProgram(trojan_name);
-        break;
-    }
+    std::string mihomo_name = "mihomo.exe";
 #else
-    std::string v2core_name = "v2ray";
-    std::string ss_libev_name = "ss-local";
-    std::string ssr_libev_name = "ssr-local";
-    std::string trojan_name = "trojan";
-
-    switch(client)
-    {
-    case SPEEDTEST_MESSAGE_FOUNDVMESS:
-        writeLog(LOG_TYPE_INFO, "Killing v2ray core...");
-        killProgram(v2core_name);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSSR:
-        writeLog(LOG_TYPE_INFO, "Killing shadowsocksr-libev...");
-        killProgram(ssr_libev_name);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDSS:
-        writeLog(LOG_TYPE_INFO, "Killing shadowsocks-libev...");
-        killProgram(ss_libev_name);
-        break;
-    case SPEEDTEST_MESSAGE_FOUNDTROJAN:
-        writeLog(LOG_TYPE_INFO, "Killing trojan...");
-        killProgram(trojan_name);
-        break;
-    }
-#endif
+    std::string mihomo_name = "mihomo";
+#endif // _WIN32
+    writeLog(LOG_TYPE_INFO, "Killing mihomo core...");
+    killProgram(mihomo_name);
     return 0;
 }
 
@@ -404,20 +244,8 @@ void readConf(std::string path)
     ini.GetBoolIfExist("test_site_ping", test_site_ping);
     ini.GetBoolIfExist("test_upload", test_upload);
     ini.GetBoolIfExist("test_nat_type", test_nat_type);
-#ifdef _WIN32
-    if(ini.ItemExist("preferred_ss_client"))
-    {
-        strTemp = ini.Get("preferred_ss_client");
-        if(strTemp == "ss-csharp")
-            ss_libev = false;
-    }
-    if(ini.ItemExist("preferred_ssr_client"))
-    {
-        strTemp = ini.Get("preferred_ssr_client");
-        if(strTemp == "ssr-csharp")
-            ssr_libev = false;
-    }
-#endif // _WIN32
+    // preferred_ss_client / preferred_ssr_client INI keys are now ignored: the
+    // mihomo single-kernel build does not use ss-csharp / ssr-csharp anymore.
     ini.GetIfExist("override_conf_port", override_conf_port);
     ini.GetIntIfExist("thread_count", def_thread_count);
     ini.GetBoolIfExist("pause_on_done", pause_on_done);
@@ -625,8 +453,10 @@ int singleTest(nodeInfo &node)
     }
     defer(auto end = steady_clock::now(); auto lapse = duration_cast<seconds>(end - start); node.duration = lapse.count();)
 
-    if(node.linkType == SPEEDTEST_MESSAGE_FOUNDSOCKS)
+    if(node.linkType == SPEEDTEST_MESSAGE_FOUNDSOCKS || node.linkType == SPEEDTEST_MESSAGE_FOUNDHTTP)
     {
+        // SOCKS5 / HTTP nodes connect to the upstream proxy directly without
+        // a local kernel. proxyStr stores "user=<u>&pass=<p>".
         testserver = node.server;
         testport = node.port;
         username = getUrlArg(node.proxyStr, "user");
@@ -636,8 +466,8 @@ int singleTest(nodeInfo &node)
     {
         testserver = socksaddr;
         testport = socksport;
-        writeLog(LOG_TYPE_INFO, "Writing config file...");
-        fileWrite("config.json", node.proxyStr, true);
+        writeLog(LOG_TYPE_INFO, "Writing mihomo config file...");
+        fileWrite("config.yaml", node.proxyStr, true);
         if(node.linkType != -1 && avail_status[node.linkType] == 1)
             runClient(node.linkType);
     }
@@ -1035,12 +865,10 @@ int main(int argc, char* argv[])
     if(!rpcmode)
         SetConsoleTitle("Stair Speedtest Reborn " VERSION);
 
-    //kill any client before testing
+    //kill any leftover mihomo before testing (only macOS keeps the kernel
+    //alive across runs; on Windows JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE handles it).
 #ifdef __APPLE__
-    killClient(SPEEDTEST_MESSAGE_FOUNDSS);
-    killClient(SPEEDTEST_MESSAGE_FOUNDSSR);
-    killClient(SPEEDTEST_MESSAGE_FOUNDVMESS);
-    killClient(SPEEDTEST_MESSAGE_FOUNDTROJAN);
+    killClient(0);
 #endif // __APPLE__
     clientCheck();
     socksport = checkPort(socksport);

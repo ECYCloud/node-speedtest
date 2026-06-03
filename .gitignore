@@ -43,3 +43,8 @@ linux64_log.txt
 *.swp
 .DS_Store
 Thumbs.db
+
+# Local scratch (don't commit)
+.tmp_old_render.txt
+*.tmp.txt
+

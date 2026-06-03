@@ -22,7 +22,13 @@ extern int global_log_level;
 typedef std::lock_guard<std::mutex> guarded_mutex;
 std::mutex cache_rw_lock;
 
-std::string user_agent_str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36";
+// UA used for all outbound HTTP(S) requests, most importantly subscription
+// fetching: many airports return a Clash/mihomo YAML only when the UA looks
+// like a Clash client. Format: "Clash mihomo/<kernel-version> stairspeedtest-reborn".
+// main() overrides this at startup with the REAL kernel version queried from
+// the bundled mihomo binary (see buildUserAgent()); this is just the default.
+std::string user_agent_str =
+    "Clash mihomo/" MIHOMO_FALLBACK_VERSION " stairspeedtest-reborn";
 
 static inline void curl_init()
 {
@@ -171,6 +177,72 @@ std::string buildSocks5ProxyString(const std::string &addr, int port, const std:
     std::string authstr = username.size() && password.size() ? username + ":" + password + "@" : "";
     std::string proxystr = "socks5://" + authstr + addr + ":" + std::to_string(port);
     return proxystr;
+}
+
+// Measure real request latency to `url` through `proxy` (a socks5:// string).
+//
+// HTTPS includes a TLS handshake that would inflate a single measurement, so we
+// REUSE one libcurl handle: a throwaway warm-up request first establishes the
+// TCP+TLS connection, then `probes` measured requests run on the warm (kept-
+// alive) connection — their CURLINFO_TOTAL_TIME excludes the handshake. We
+// return the mean of the successful measured probes (ms), or -1.0 if all fail.
+// Per-probe ms (0 = failed) go into raw[0..probes-1] when non-null. When
+// `progress_label` is non-empty we draw a live progress bar to stderr.
+double measureLatency(const std::string &url, const std::string &proxy,
+                      int probes, int *raw, const std::string &progress_label)
+{
+    curl_init();
+    CURL *h = curl_easy_init();
+    if(!h) return -1.0;
+    curl_easy_setopt(h, CURLOPT_URL, url.data());
+    if(proxy.size())
+        curl_easy_setopt(h, CURLOPT_PROXY, proxy.data());
+    curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(h, CURLOPT_NOPROGRESS, 1L);
+    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(h, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(h, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(h, CURLOPT_USERAGENT, user_agent_str.data());
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, dummy_writer);
+    curl_easy_setopt(h, CURLOPT_FORBID_REUSE, 0L); // allow keep-alive reuse
+
+    bool show = !progress_label.empty();
+    if(show)
+        std::cerr << progress_label << " ";
+
+    // Warm-up: pays the TCP + TLS handshake once; result discarded.
+    curl_easy_perform(h);
+
+    double total = 0.0;
+    int ok = 0;
+    for(int i = 0; i < probes; ++i)
+    {
+        if(raw) raw[i] = 0;
+        CURLcode res = curl_easy_perform(h);
+        int ms = 0;
+        if(res == CURLE_OK)
+        {
+            double t = 0.0;
+            curl_easy_getinfo(h, CURLINFO_TOTAL_TIME, &t);
+            ms = static_cast<int>(t * 1000.0 + 0.5);
+            if(ms <= 0) ms = 1;
+            if(raw) raw[i] = ms;
+            total += ms;
+            ok++;
+        }
+        if(show)
+            std::cerr << (res == CURLE_OK ? "[" + std::to_string(ms) + "ms]"
+                                          : "[超时]")
+                      << " " << (i + 1) << "/" << probes << "  " << std::flush;
+    }
+    curl_easy_cleanup(h);
+    if(show)
+        std::cerr << std::endl;
+    if(ok == 0) return -1.0;
+    return total / ok;
 }
 
 std::string webGet(const std::string &url, const std::string &proxy, unsigned int cache_ttl, std::string *response_headers, string_map *request_headers)

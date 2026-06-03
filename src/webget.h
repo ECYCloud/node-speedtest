@@ -27,6 +27,15 @@ int webPatch(const std::string &url, const std::string &data, const std::string 
 int webPut(const std::string &url, const std::string &data, const std::string &proxy, const string_array &request_headers, std::string *retData);
 std::string buildSocks5ProxyString(const std::string &addr, int port, const std::string &username, const std::string &password);
 
+// Measure real request latency to `url` through `proxy` (socks5:// string).
+// Reuses one connection (warm-up + probes) so the TLS handshake is excluded.
+// Returns mean of successful probes in ms, or -1.0 if all failed. Per-probe
+// timings (0 = fail) go into raw[0..probes-1] when non-null. A non-empty
+// `progress_label` prints a live per-probe progress line to stderr.
+double measureLatency(const std::string &url, const std::string &proxy,
+                      int probes = 3, int *raw = nullptr,
+                      const std::string &progress_label = "");
+
 // Unimplemented: (CURLOPT_HTTPHEADER: Host:)
 std::string httpGet(const std::string &host, const std::string &addr, const std::string &uri);
 std::string httpsGet(const std::string &host, const std::string &addr, const std::string &uri);

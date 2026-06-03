@@ -15,6 +15,10 @@ using namespace std::chrono;
 
 std::string export_sort_method_render = "none";
 bool export_as_ssrspeed = false;
+// Real mihomo kernel version (e.g. "v1.19.26"), filled in at startup by
+// initUserAgent() in main.cpp. Shown in the result-image footer. Defaults to
+// the compile-time fallback so the standalone preview harness has a value too.
+std::string mihomo_kernel_version = MIHOMO_FALLBACK_VERSION;
 // Resolution multiplier applied to every geometric size (font, line height,
 // padding, etc). The final image is image_scale * image_scale times denser,
 // which makes the result PNG considerably sharper at the cost of file size.

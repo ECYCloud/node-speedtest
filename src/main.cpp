@@ -178,7 +178,6 @@ void clientCheck()
         writeLog(LOG_TYPE_INFO, "Found mihomo core at path " + mihomo_path);
     else
         writeLog(LOG_TYPE_WARN, "mihomo core not found at path " + mihomo_path);
-
     // All proxy-protocol slots map to the single mihomo binary now.
     avail_status[SPEEDTEST_MESSAGE_FOUNDVMESS]   = status;
     avail_status[SPEEDTEST_MESSAGE_FOUNDSS]      = status;
@@ -187,6 +186,49 @@ void clientCheck()
     avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS]   = status;
     avail_status[SPEEDTEST_MESSAGE_FOUNDHY2]     = status;
     avail_status[SPEEDTEST_MESSAGE_FOUNDANYTLS]  = status;
+}
+
+// Build the subscription User-Agent as "Clash mihomo/<ver> stairspeedtest-reborn",
+// querying the REAL kernel version from `mihomo -v` so it never goes stale.
+// Falls back to MIHOMO_FALLBACK_VERSION if the binary can't be run/parsed.
+// Overrides the global `user_agent_str` defined in webget.cpp.
+extern std::string user_agent_str;
+extern std::string mihomo_kernel_version; // defined in renderer.cpp (footer)
+static void initUserAgent()
+{
+#ifdef _WIN32
+    const char *cmd = "tools\\clients\\mihomo.exe -v 2>&1";
+    FILE *pipe = _popen(cmd, "r");
+#else
+    const char *cmd = "tools/clients/mihomo -v 2>&1";
+    FILE *pipe = popen(cmd, "r");
+#endif
+    std::string ver = MIHOMO_FALLBACK_VERSION, out;
+    if(pipe)
+    {
+        char buf[256];
+        while(fgets(buf, sizeof(buf), pipe)) out += buf;
+#ifdef _WIN32
+        _pclose(pipe);
+#else
+        pclose(pipe);
+#endif
+        // Output looks like: "Mihomo Meta vX.Y.Z windows amd64 with go..."
+        std::string::size_type v = out.find(" v");
+        if(v != std::string::npos)
+        {
+            std::string::size_type s = v + 1;       // points at 'v'
+            std::string::size_type e = s;
+            while(e < out.size() && out[e] != ' ' && out[e] != '\r' && out[e] != '\n')
+                ++e;
+            std::string token = out.substr(s, e - s);
+            if(token.size() >= 2 && token[0] == 'v')
+                ver = token;
+        }
+    }
+    user_agent_str = "Clash mihomo/" + ver + " stairspeedtest-reborn";
+    mihomo_kernel_version = ver; // share the real version with the footer
+    writeLog(LOG_TYPE_INFO, "Subscription User-Agent: " + user_agent_str);
 }
 
 int runClient(int client)
@@ -417,9 +459,9 @@ void signalHandler(int signum)
             else if(resultPath.find("-partial.log") == std::string::npos)
                 resultPath = replace_all_distinct(resultPath, ".log", "-partial.log");
 
-            // Add the same "<serial> · <type> · " / flag-emoji rewrite that the
-            // normal exit path runs. Idempotent, so safe even if batchTest had
-            // already decorated some nodes before the signal.
+            // Run the same flag-emoji normalization the normal exit path does
+            // (idempotent), so partial-save logs use the same [HK]-style
+            // country tags as fully-completed runs.
             decorateNodeLabels(allNodes);
 
             saveResult(allNodes);
@@ -529,69 +571,23 @@ std::string removeEmoji(const std::string &orig_remark)
     return remark;
 }
 
-// Map a SPEEDTEST_MESSAGE_FOUND* link type to a human-friendly protocol name
-// shown in the result table.
-static std::string linkTypeName(int linkType)
-{
-    switch(linkType)
-    {
-    case SPEEDTEST_MESSAGE_FOUNDVMESS:   return "Vmess";
-    case SPEEDTEST_MESSAGE_FOUNDVLESS:   return "Vless";
-    case SPEEDTEST_MESSAGE_FOUNDSS:      return "SS";
-    case SPEEDTEST_MESSAGE_FOUNDSSR:     return "SSR";
-    case SPEEDTEST_MESSAGE_FOUNDTROJAN:  return "Trojan";
-    case SPEEDTEST_MESSAGE_FOUNDHY2:     return "Hysteria2";
-    case SPEEDTEST_MESSAGE_FOUNDANYTLS:  return "AnyTLS";
-    case SPEEDTEST_MESSAGE_FOUNDSOCKS:   return "Socks5";
-    case SPEEDTEST_MESSAGE_FOUNDHTTP:    return "HTTP";
-    case SPEEDTEST_MESSAGE_FOUNDSNELL:   return "Snell";
-    default:                             return "Unknown";
-    }
-}
-
-// True when remarks already starts with "<digits> · ", produced by a previous
-// decorateNodeLabels() call. Lets us run the routine twice (normal exit AND
-// signal handler) without doubling the prefix.
-static bool isAlreadyDecorated(const std::string &r)
-{
-    // Need at least one digit followed by " · " somewhere reasonably early.
-    std::string::size_type p = r.find(" \xc2\xb7 "); // " · " in UTF-8 (·=U+00B7)
-    if(p == std::string::npos || p == 0 || p > 4)
-        return false;
-    for(std::string::size_type i = 0; i < p; ++i)
-        if(r[i] < '0' || r[i] > '9')
-            return false;
-    // also expect the protocol token followed by another " · "
-    return r.find(" \xc2\xb7 ", p + 5) != std::string::npos;
-}
-
-// Build the display label that will appear in the result PNG / .log.
-// Format: "01 · Vless · [HK] 香港 II · A1 [CF 0.1x]"
-//   - serial: 1-based, zero-padded to 2 digits when total <= 99
-//   - flag emojis are converted to ISO bracket form by replaceFlagEmojis
-//   - idempotent: re-running on already decorated nodes is a no-op
+// Normalize node remarks for the result table.
+//
+// The SSRSpeed-style renderer now draws flag emoji NATIVELY (NotoColorEmoji via
+// FreeType + HarfBuzz), so we must KEEP the raw 🇭🇰-style bytes in remarks
+// instead of converting them to "[HK]" text. This pass therefore only trims
+// surrounding whitespace; it is kept (with its call sites) so the signal
+// handler / batchTest exit path still has one place to finalize labels.
 static void decorateNodeLabels(std::vector<nodeInfo> &nodes)
 {
-    int total = static_cast<int>(nodes.size());
-    int width = total >= 100 ? 3 : 2;
-    for(int i = 0; i < total; ++i)
-    {
-        if(isAlreadyDecorated(nodes[i].remarks))
-            continue;
-        std::string serial = std::to_string(i + 1);
-        while((int)serial.size() < width) serial = "0" + serial;
-        std::string label = serial + " \xc2\xb7 " + linkTypeName(nodes[i].linkType)
-                          + " \xc2\xb7 " + replaceFlagEmojis(nodes[i].remarks);
-        nodes[i].remarks = label;
-    }
+    for(auto &n : nodes)
+        n.remarks = trim(n.remarks);
 }
 
 int singleTest(nodeInfo &node)
 {
-    // Convert flag emojis like 🇭🇰 -> [HK] BEFORE the legacy emoji stripper
-    // runs, so the country code survives.
-    node.remarks = trim(removeEmoji(replaceFlagEmojis(node.remarks)));
-    int retVal = 0;
+    // Keep the raw flag emoji (🇭🇰 …) intact — the renderer draws it natively.
+    node.remarks = trim(node.remarks);
     std::string logdata, testserver, username, password, proxy;
     int testport;
     node.ulTarget = def_upload_target; //for now only use default
@@ -604,7 +600,7 @@ int singleTest(nodeInfo &node)
     if(node.proxyStr == "LOG") //import from result
     {
         if(!rpcmode)
-            printMsg(SPEEDTEST_MESSAGE_GOTSERVER, rpcmode, id, node.group, node.remarks, std::to_string(node_count));
+            printMsg(SPEEDTEST_MESSAGE_GOTSERVER, rpcmode, id, node.group, replaceFlagEmojis(node.remarks), std::to_string(node_count));
         printMsg(SPEEDTEST_MESSAGE_GOTPING, rpcmode, id, node.avgPing);
         printMsg(SPEEDTEST_MESSAGE_GOTGPING, rpcmode, id, node.sitePing);
         printMsg(SPEEDTEST_MESSAGE_GOTSPEED, rpcmode, id, node.avgSpeed);
@@ -644,7 +640,7 @@ int singleTest(nodeInfo &node)
 
     //printMsg(SPEEDTEST_MESSAGE_GOTSERVER, node, rpcmode);
     if(!rpcmode)
-        printMsg(SPEEDTEST_MESSAGE_GOTSERVER, rpcmode, id, node.group, node.remarks, std::to_string(node_count));
+        printMsg(SPEEDTEST_MESSAGE_GOTSERVER, rpcmode, id, node.group, replaceFlagEmojis(node.remarks), std::to_string(node_count));
     // sleep moved above to right after the proxy switch; no extra wait needed here.
     writeLog(LOG_TYPE_INFO, "Now started fetching GeoIP info...");
     printMsg(SPEEDTEST_MESSAGE_STARTGEOIP, rpcmode, id);
@@ -657,37 +653,40 @@ int singleTest(nodeInfo &node)
     }
 
     printMsg(SPEEDTEST_MESSAGE_STARTPING, rpcmode, id);
-    // UDP-only protocols (Hysteria2, TUIC, etc.) don't answer TCP SYN on the
-    // proxy port, so a TCP ping always reports 100% loss. Skip tcping for them
-    // and rely on the actual download attempt (through the local SOCKS5 port)
-    // to decide whether the node is alive. We measure ping later by timing the
-    // first proxied HTTP request.
-    bool is_udp_only = (node.linkType == SPEEDTEST_MESSAGE_FOUNDHY2);
-    if(speedtest_mode != "speedonly" && !is_udp_only)
+    // Latency model (rebuilt): we no longer use a raw TCP SYN ping nor a
+    // plaintext "Google ping". Both latency columns are now REAL proxied
+    // requests measured with libcurl's CURLINFO_TOTAL_TIME:
+    //   * HTTP延迟  -> http  request through the SOCKS5 proxy (no TLS)
+    //   * HTTPS延迟 -> https request through the SOCKS5 proxy (incl. TLS)
+    // This works uniformly for TCP- and UDP-based protocols (Hysteria2 etc.),
+    // since everything goes through the local SOCKS5 port.
+    const std::string http_probe_url  = "http://cp.cloudflare.com/generate_204";
+    const std::string https_probe_url = "https://cp.cloudflare.com/generate_204";
+
+    if(speedtest_mode != "speedonly")
     {
-        writeLog(LOG_TYPE_INFO, "Now performing TCP ping...");
-        retVal = tcping(node);
-        if(retVal == SPEEDTEST_ERROR_NORESOLVE)
+        writeLog(LOG_TYPE_INFO, "Now measuring HTTP latency through proxy...");
+        double httpms = measureLatency(http_probe_url, proxy, 3, node.rawPing,
+                                       rpcmode ? "" : "HTTP延迟");
+        if(httpms < 0.0)
         {
-            writeLog(LOG_TYPE_ERROR, "Node address resolve error.");
-            printMsg(SPEEDTEST_ERROR_NORESOLVE, rpcmode, id);
-            return SPEEDTEST_ERROR_NORESOLVE;
+            node.avgPing = "0.00";
+            writeLog(LOG_TYPE_INFO, "HTTP latency: all probes failed.");
         }
-        if(node.pkLoss == "100.00%")
+        else
         {
-            writeLog(LOG_TYPE_ERROR, "Cannot connect to this node.");
-            printMsg(SPEEDTEST_ERROR_NOCONNECTION, rpcmode, id);
-            return SPEEDTEST_ERROR_NOCONNECTION;
+            char t[16] = {};
+            snprintf(t, sizeof(t), "%0.2f", httpms);
+            node.avgPing.assign(t);
+            writeLog(LOG_TYPE_INFO, "HTTP latency: " + node.avgPing + " ms");
         }
-        logdata = std::accumulate(std::next(std::begin(node.rawPing)), std::end(node.rawPing), std::to_string(node.rawPing[0]), [](std::string a, int b){return std::move(a) + " " + std::to_string(b);});
-        writeLog(LOG_TYPE_RAW, logdata);
-        writeLog(LOG_TYPE_INFO, "TCP Ping: " + node.avgPing + "  Packet Loss: " + node.pkLoss);
+        // Connectivity is now decided by the download attempt, not by ping,
+        // so a failed latency probe is not a hard error here.
+        node.pkLoss = httpms < 0.0 ? "100.00%" : "0.00%";
     }
     else
     {
         node.pkLoss = "0.00%";
-        if(is_udp_only)
-            writeLog(LOG_TYPE_INFO, "Skipping TCP ping for UDP-only protocol (Hysteria2 etc).");
     }
     printMsg(SPEEDTEST_MESSAGE_GOTPING, rpcmode, id, node.avgPing, node.pkLoss);
 
@@ -709,12 +708,23 @@ int singleTest(nodeInfo &node)
     if(test_site_ping)
     {
         printMsg(SPEEDTEST_MESSAGE_STARTGPING, rpcmode, id);
-        writeLog(LOG_TYPE_INFO, "Now performing site ping...");
-        //websitePing(node, "https://www.google.com/", testserver, testport, username, password);
-        sitePing(node, testserver, testport, username, password, "http://www.google.com");
-        logdata = std::accumulate(std::next(std::begin(node.rawSitePing)), std::end(node.rawSitePing), std::to_string(node.rawSitePing[0]), [](std::string a, int b){return std::move(a) + " " + std::to_string(b);});
-        writeLog(LOG_TYPE_RAW, logdata);
-        writeLog(LOG_TYPE_INFO, "Site ping: " + node.sitePing);
+        writeLog(LOG_TYPE_INFO, "Now measuring HTTPS latency through proxy...");
+        int rawhttps[10] = {};
+        double httpsms = measureLatency(https_probe_url, proxy, 3, rawhttps,
+                                        rpcmode ? "" : "HTTPS延迟");
+        std::move(std::begin(rawhttps), std::end(rawhttps), node.rawSitePing);
+        if(httpsms < 0.0)
+        {
+            node.sitePing = "0.00";
+            writeLog(LOG_TYPE_INFO, "HTTPS latency: all probes failed.");
+        }
+        else
+        {
+            char t[16] = {};
+            snprintf(t, sizeof(t), "%0.2f", httpsms);
+            node.sitePing.assign(t);
+            writeLog(LOG_TYPE_INFO, "HTTPS latency: " + node.sitePing + " ms");
+        }
         printMsg(SPEEDTEST_MESSAGE_GOTGPING, rpcmode, id, node.sitePing);
     }
 
@@ -793,7 +803,7 @@ void batchTest(std::vector<nodeInfo> &nodes)
         }
         //resultEOF(speedCalc(tottraffic * 1.0), onlines, nodes->size());
         writeLog(LOG_TYPE_INFO, "All nodes tested. Total/Online nodes: " + std::to_string(node_count) + "/" + std::to_string(onlines) + " Traffic used: " + speedCalc(tottraffic * 1.0));
-        decorateNodeLabels(nodes); // prepend "01 · Vless · " to each remarks before persistence
+        decorateNodeLabels(nodes); // normalize flag emojis (e.g. 🇭🇰 -> [HK]) before persistence
         saveResult(nodes);
         if(webserver_mode || !multilink)
         {
@@ -1052,6 +1062,7 @@ int main(int argc, char* argv[])
     killClient(0);
 #endif // __APPLE__
     clientCheck();
+    initUserAgent(); // build "Clash mihomo/<ver> stairspeedtest-reborn" UA
     socksport = checkPort(socksport);
     writeLog(LOG_TYPE_INFO, "Using local port: " + std::to_string(socksport));
     writeLog(LOG_TYPE_INFO, "Init completed.");

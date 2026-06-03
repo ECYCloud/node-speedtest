@@ -137,30 +137,129 @@ std::string replace_first(std::string str, const std::string &old_value, const s
 
 std::string vmessConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &type, const std::string &id, const std::string &aid, const std::string &net, const std::string &cipher, const std::string &path, const std::string &host, const std::string &edge, const std::string &tls, tribool udp, tribool tfo, tribool scv, tribool tls13)
 {
-    // VMess support intentionally disabled in mihomo-only build.
-    (void)group; (void)remarks; (void)add; (void)port; (void)type;
-    (void)id; (void)aid; (void)net; (void)cipher; (void)path;
-    (void)host; (void)edge; (void)tls; (void)udp; (void)tfo;
-    (void)scv; (void)tls13;
-    return std::string();
+    (void)group; (void)remarks; (void)type; (void)edge; (void)tfo; (void)tls13;
+    bool useTLS = (tls == "tls");
+    std::string net2 = net.empty() ? std::string("tcp") : net;
+
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: vmess\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    uuid: " + yq(id) + "\n";
+    out += "    alterId: " + (aid.empty() ? std::string("0") : aid) + "\n";
+    out += "    cipher: " + (cipher.empty() ? std::string("auto") : cipher) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    out += std::string("    tls: ") + (useTLS ? "true" : "false") + "\n";
+    out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
+    if(useTLS && !host.empty())
+        out += "    servername: " + yq(host) + "\n";
+    out += "    network: " + net2 + "\n";
+    if(net2 == "ws")
+    {
+        out += "    ws-opts:\n";
+        out += "      path: " + yq(path.empty() ? std::string("/") : path) + "\n";
+        if(!host.empty())
+        {
+            out += "      headers:\n";
+            out += "        Host: " + yq(host) + "\n";
+        }
+    }
+    else if(net2 == "grpc")
+    {
+        out += "    grpc-opts:\n";
+        out += "      grpc-service-name: " + yq(path) + "\n";
+    }
+    out += mihomoTail();
+    return out;
 }
 
 std::string ssrConstruct(const std::string &group, const std::string &remarks, const std::string &remarks_base64, const std::string &server, const std::string &port, const std::string &protocol, const std::string &method, const std::string &obfs, const std::string &password, const std::string &obfsparam, const std::string &protoparam, bool libev, tribool udp, tribool tfo, tribool scv)
 {
-    // ShadowsocksR intentionally disabled in mihomo-only build.
-    (void)group; (void)remarks; (void)remarks_base64; (void)server; (void)port;
-    (void)protocol; (void)method; (void)obfs; (void)password; (void)obfsparam;
-    (void)protoparam; (void)libev; (void)udp; (void)tfo; (void)scv;
-    return std::string();
+    (void)group; (void)remarks; (void)remarks_base64; (void)libev; (void)tfo; (void)scv;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: ssr\n";
+    out += "    server: " + yq(server) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    cipher: " + yq(method) + "\n";
+    out += "    password: " + yq(password) + "\n";
+    out += "    protocol: " + yq(protocol) + "\n";
+    out += "    obfs: " + yq(obfs) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    if(!protoparam.empty())
+        out += "    protocol-param: " + yq(protoparam) + "\n";
+    if(!obfsparam.empty())
+        out += "    obfs-param: " + yq(obfsparam) + "\n";
+    out += mihomoTail();
+    return out;
 }
 
 std::string ssConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &method, const std::string &plugin, const std::string &pluginopts, bool libev, tribool udp, tribool tfo, tribool scv, tribool tls13)
 {
-    // Shadowsocks intentionally disabled in mihomo-only build.
-    (void)group; (void)remarks; (void)server; (void)port; (void)password;
-    (void)method; (void)plugin; (void)pluginopts; (void)libev; (void)udp;
-    (void)tfo; (void)scv; (void)tls13;
-    return std::string();
+    (void)group; (void)remarks; (void)libev; (void)tfo; (void)scv; (void)tls13;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: ss\n";
+    out += "    server: " + yq(server) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    cipher: " + yq(method) + "\n";
+    out += "    password: " + yq(password) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+
+    if(!plugin.empty())
+    {
+        // Parse pluginopts like "obfs=http;obfs-host=abc.com" into key/value pairs.
+        std::string obfsMode, obfsHost, wsHost, wsPath;
+        bool wsTLS = false;
+        std::vector<std::string> opts = split(pluginopts, ";");
+        for(auto &kv : opts)
+        {
+            std::string::size_type eq = kv.find('=');
+            if(eq == std::string::npos)
+            {
+                if(kv == "tls")
+                    wsTLS = true;
+                continue;
+            }
+            std::string key = kv.substr(0, eq);
+            std::string val = kv.substr(eq + 1);
+            if(key == "obfs")
+                obfsMode = val;
+            else if(key == "obfs-host")
+                obfsHost = val;
+            else if(key == "host")
+                wsHost = val;
+            else if(key == "path")
+                wsPath = val;
+            else if(key == "tls")
+                wsTLS = true;
+        }
+
+        if(plugin == "obfs" || plugin == "simple-obfs" || plugin == "obfs-local")
+        {
+            out += "    plugin: obfs\n";
+            out += "    plugin-opts:\n";
+            out += "      mode: " + (obfsMode.empty() ? std::string("http") : obfsMode) + "\n";
+            if(!obfsHost.empty())
+                out += "      host: " + yq(obfsHost) + "\n";
+        }
+        else if(plugin == "v2ray-plugin")
+        {
+            out += "    plugin: v2ray-plugin\n";
+            out += "    plugin-opts:\n";
+            out += "      mode: websocket\n";
+            if(!wsHost.empty())
+                out += "      host: " + yq(wsHost) + "\n";
+            if(!wsPath.empty())
+                out += "      path: " + yq(wsPath) + "\n";
+            if(wsTLS)
+                out += "      tls: true\n";
+        }
+        // Any other plugin value: emit no plugin block.
+    }
+    out += mihomoTail();
+    return out;
 }
 
 std::string socksConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &username, const std::string &password, tribool udp, tribool tfo, tribool scv)
@@ -220,10 +319,24 @@ std::string trojanConstruct(const std::string &group, const std::string &remarks
 
 std::string snellConstruct(const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &obfs, const std::string &host, tribool udp, tribool tfo, tribool scv)
 {
-    // Snell is no longer supported in mihomo-only build.
-    (void)group; (void)remarks; (void)server; (void)port; (void)password;
-    (void)obfs; (void)host; (void)udp; (void)tfo; (void)scv;
-    return std::string();
+    (void)group; (void)remarks; (void)tfo; (void)scv;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: snell\n";
+    out += "    server: " + yq(server) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    psk: " + yq(password) + "\n";
+    out += "    version: 2\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    if(!obfs.empty())
+    {
+        out += "    obfs-opts:\n";
+        out += "      mode: " + obfs + "\n";
+        if(!host.empty())
+            out += "      host: " + yq(host) + "\n";
+    }
+    out += mihomoTail();
+    return out;
 }
 
 // -----------------------------------------------------------------------------

@@ -35,6 +35,7 @@ ENDIF()
 ADD_EXECUTABLE(stairspeedtest 
 	src/confbuild.cpp
 	src/geoip.cpp
+	src/emoji.cpp
 	src/logger.cpp
 	src/main.cpp
 	src/md5.cpp
@@ -89,6 +90,12 @@ ADD_DEFINITIONS(${PNG_DEFINITIONS})
 FIND_PACKAGE(Freetype REQUIRED)
 INCLUDE_DIRECTORIES(${FREETYPE_INCLUDE_DIR_freetype2})
 TARGET_LINK_LIBRARIES(stairspeedtest ${FREETYPE_LIBRARIES})
+
+# HarfBuzz: used for native colour-emoji shaping (flag emoji = RI pair ligature)
+PKG_CHECK_MODULES(HARFBUZZ harfbuzz REQUIRED)
+INCLUDE_DIRECTORIES(${HARFBUZZ_INCLUDE_DIRS})
+LINK_DIRECTORIES(${HARFBUZZ_LIBRARY_DIRS})
+TARGET_LINK_LIBRARIES(stairspeedtest ${HARFBUZZ_LIBRARIES})
 
 FIND_PACKAGE(PNGwriter 0.7.0 REQUIRED)
 INCLUDE_DIRECTORIES(${PNGwriter_INCLUDE_DIRS})

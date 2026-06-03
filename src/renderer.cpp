@@ -447,7 +447,25 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes, b
     std::string gentime = "生成时间：" + getTime(3);
     std::string traffic = "已使用流量：" + speedCalc((double)total_traffic) + "。 ";
     std::string about = "由 Stair Speedtest Reborn " VERSION " 生成。";
-    std::string title = "  Stair Speedtest Reborn 测速结果 ( " VERSION " )  ";
+
+    // Pull the group name out of any data row (skip the title row at index 0).
+    // Most subscription tests share a single group, so we surface it in the
+    // banner rather than repeat it on every row.
+    std::string banner_group;
+    for(int i = 1; i <= node_count; ++i)
+    {
+        if(!nodes[i].group.empty())
+        {
+            banner_group = nodes[i].group;
+            break;
+        }
+    }
+    std::string title;
+    if(!banner_group.empty())
+        title = "  " + banner_group + " · 测速结果 ( Stair Speedtest Reborn " VERSION " )  ";
+    else
+        title = "  Stair Speedtest Reborn 测速结果 ( " VERSION " )  ";
+
     //SSRSpeed style
     if(export_as_ssrspeed)
     {

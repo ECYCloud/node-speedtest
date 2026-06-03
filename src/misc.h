@@ -66,6 +66,7 @@ bool is_str_utf8(const std::string &data);
 std::string getFormData(const std::string &raw_data);
 
 void sleep(int interval);
+std::string replaceFlagEmojis(const std::string &s);
 bool regValid(const std::string &reg);
 bool regFind(const std::string &src, const std::string &match);
 std::string regReplace(const std::string &src, const std::string &match, const std::string &rep, bool global = true, bool multiline = true);

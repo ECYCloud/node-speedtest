@@ -317,6 +317,44 @@ int webPatch(const std::string &url, const std::string &data, const std::string 
     return curlPatch(url, data, proxy, request_headers, retData);
 }
 
+// HTTP PUT — used to drive the Clash API (e.g. PUT /proxies/GLOBAL to switch
+// the active outbound). Identical to curlPatch except for CUSTOMREQUEST.
+int curlPut(const std::string &url, const std::string &data, const std::string &proxy, const string_array &request_headers, std::string *retData)
+{
+    CURL *curl_handle;
+    CURLcode res;
+    long retVal = 0;
+    struct curl_slist *list = NULL;
+
+    curl_init();
+    curl_handle = curl_easy_init();
+    list = curl_slist_append(list, "Content-Type: application/json;charset='utf-8'");
+    for(const std::string &x : request_headers)
+        list = curl_slist_append(list, x.data());
+
+    curl_set_common_options(curl_handle, url.data(), 0L);
+    curl_easy_setopt(curl_handle, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, data.data());
+    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, data.size());
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, writer);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, retData);
+    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, list);
+    if(proxy.size())
+        curl_easy_setopt(curl_handle, CURLOPT_PROXY, proxy.data());
+
+    res = curl_easy_perform(curl_handle);
+    curl_slist_free_all(list);
+    if(res == CURLE_OK)
+        res = curl_easy_getinfo(curl_handle, CURLINFO_HTTP_CODE, &retVal);
+    curl_easy_cleanup(curl_handle);
+    return retVal;
+}
+
+int webPut(const std::string &url, const std::string &data, const std::string &proxy, const string_array &request_headers, std::string *retData)
+{
+    return curlPut(url, data, proxy, request_headers, retData);
+}
+
 int curlHead(const std::string &url, const std::string &proxy, const string_array &request_headers, std::string &response_headers)
 {
     CURL *curl_handle;

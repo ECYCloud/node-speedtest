@@ -198,6 +198,42 @@ int runClient(int client)
     return 0;
 }
 
+// Block until the mihomo Clash API answers /version, or timeout. Returns true
+// when the kernel is ready to accept proxy switches.
+bool mihomoWaitReady(int timeout_ms = 5000)
+{
+    std::string ret;
+    int elapsed = 0;
+    const int step = 100;
+    while(elapsed < timeout_ms)
+    {
+        ret.clear();
+        long code = webPost("http://127.0.0.1:9990/version", "", "", string_array{}, &ret);
+        // mihomo responds 405 to POST on /version but the connection itself
+        // confirms the API is up; any non-zero HTTP code means alive.
+        // We try a real GET via webGet first, falling back to socket probe.
+        std::string body = webGet("http://127.0.0.1:9990/version", "", 0);
+        if(!body.empty() && body.find("\"version\"") != std::string::npos)
+            return true;
+        (void)code;
+        sleep(step);
+        elapsed += step;
+    }
+    return false;
+}
+
+// Switch the GLOBAL selector to the given outbound name. Returns true on 2xx.
+bool mihomoSwitchProxy(const std::string &name)
+{
+    std::string body = "{\"name\":\"" + name + "\"}";
+    std::string resp;
+    long code = webPut("http://127.0.0.1:9990/proxies/GLOBAL", body, "", string_array{}, &resp);
+    if(code >= 200 && code < 300)
+        return true;
+    writeLog(LOG_TYPE_ERROR, "Failed to switch proxy to '" + name + "' (HTTP " + std::to_string(code) + "): " + resp);
+    return false;
+}
+
 int killClient(int client)
 {
     (void)client;
@@ -478,9 +514,49 @@ std::string removeEmoji(const std::string &orig_remark)
     return remark;
 }
 
+// Map a SPEEDTEST_MESSAGE_FOUND* link type to a human-friendly protocol name
+// shown in the result table.
+static std::string linkTypeName(int linkType)
+{
+    switch(linkType)
+    {
+    case SPEEDTEST_MESSAGE_FOUNDVMESS:   return "Vmess";
+    case SPEEDTEST_MESSAGE_FOUNDVLESS:   return "Vless";
+    case SPEEDTEST_MESSAGE_FOUNDSS:      return "SS";
+    case SPEEDTEST_MESSAGE_FOUNDSSR:     return "SSR";
+    case SPEEDTEST_MESSAGE_FOUNDTROJAN:  return "Trojan";
+    case SPEEDTEST_MESSAGE_FOUNDHY2:     return "Hysteria2";
+    case SPEEDTEST_MESSAGE_FOUNDANYTLS:  return "AnyTLS";
+    case SPEEDTEST_MESSAGE_FOUNDSOCKS:   return "Socks5";
+    case SPEEDTEST_MESSAGE_FOUNDHTTP:    return "HTTP";
+    case SPEEDTEST_MESSAGE_FOUNDSNELL:   return "Snell";
+    default:                             return "Unknown";
+    }
+}
+
+// Build the display label that will appear in the result PNG / .log.
+// Format: "01 · Vless · [HK] 香港 II · A1 [CF 0.1x]"
+//   - serial: 1-based, zero-padded to 2 digits when total <= 99
+//   - flag emojis are converted to ISO bracket form by replaceFlagEmojis
+static void decorateNodeLabels(std::vector<nodeInfo> &nodes)
+{
+    int total = static_cast<int>(nodes.size());
+    int width = total >= 100 ? 3 : 2;
+    for(int i = 0; i < total; ++i)
+    {
+        std::string serial = std::to_string(i + 1);
+        while((int)serial.size() < width) serial = "0" + serial;
+        std::string label = serial + " · " + linkTypeName(nodes[i].linkType)
+                          + " · " + replaceFlagEmojis(nodes[i].remarks);
+        nodes[i].remarks = label;
+    }
+}
+
 int singleTest(nodeInfo &node)
 {
-    node.remarks = trim(removeEmoji(node.remarks)); //remove all emojis
+    // Convert flag emojis like 🇭🇰 -> [HK] BEFORE the legacy emoji stripper
+    // runs, so the country code survives.
+    node.remarks = trim(removeEmoji(replaceFlagEmojis(node.remarks)));
     int retVal = 0;
     std::string logdata, testserver, username, password, proxy;
     int testport;
@@ -515,23 +591,27 @@ int singleTest(nodeInfo &node)
     }
     else
     {
+        // Plan B: kernel was started once with all nodes pre-loaded; node.proxyStr
+        // now holds the in-config name (e.g. "node-3") rather than YAML.
         testserver = socksaddr;
         testport = socksport;
-        writeLog(LOG_TYPE_INFO, "Writing mihomo config file...");
-        fileWrite("config.yaml", node.proxyStr, true);
-        if(node.linkType != -1 && avail_status[node.linkType] == 1)
-            runClient(node.linkType);
+        if(node.linkType != -1 && avail_status[node.linkType] == 1 && !node.proxyStr.empty())
+        {
+            writeLog(LOG_TYPE_INFO, "Switching mihomo outbound to '" + node.proxyStr + "'...");
+            if(!mihomoSwitchProxy(node.proxyStr))
+                writeLog(LOG_TYPE_WARN, "Proxy switch failed; the test will probably show no speed.");
+            // give mihomo a brief moment to tear down the old chain and dial the new one
+            sleep(200);
+        }
     }
-#ifdef __APPLE__
-    defer(killClient(node.linkType);)
-#endif // __APPLE__
-    defer(killByHandle();)
+    // Plan B: kernel is shared across the whole run, so per-test kill is gone.
+    // (macOS still wipes leftover processes on signal exit.)
     proxy = buildSocks5ProxyString(testserver, testport, username, password);
 
     //printMsg(SPEEDTEST_MESSAGE_GOTSERVER, node, rpcmode);
     if(!rpcmode)
         printMsg(SPEEDTEST_MESSAGE_GOTSERVER, rpcmode, id, node.group, node.remarks, std::to_string(node_count));
-    sleep(200); /// wait for client startup
+    // sleep moved above to right after the proxy switch; no extra wait needed here.
     writeLog(LOG_TYPE_INFO, "Now started fetching GeoIP info...");
     printMsg(SPEEDTEST_MESSAGE_STARTGEOIP, rpcmode, id);
     node.inboundGeoIP.set(std::async(std::launch::async, [node](){ return getGeoIPInfo(node.server, ""); }));
@@ -679,7 +759,7 @@ void batchTest(std::vector<nodeInfo> &nodes)
         }
         //resultEOF(speedCalc(tottraffic * 1.0), onlines, nodes->size());
         writeLog(LOG_TYPE_INFO, "All nodes tested. Total/Online nodes: " + std::to_string(node_count) + "/" + std::to_string(onlines) + " Traffic used: " + speedCalc(tottraffic * 1.0));
-        //exportHTML();
+        decorateNodeLabels(nodes); // prepend "01 · Vless · " to each remarks before persistence
         saveResult(nodes);
         if(webserver_mode || !multilink)
         {
@@ -995,6 +1075,42 @@ int main(int argc, char* argv[])
     }
     rewriteNodeID(allNodes); //reset all index
     node_count = allNodes.size();
+
+    // ----- Plan B: start mihomo once with every node packed into one config -----
+    bool kernel_started = false;
+    if(!allNodes.empty())
+    {
+        bool needs_kernel = false;
+        for(const auto &n : allNodes)
+        {
+            if(n.linkType != SPEEDTEST_MESSAGE_FOUNDSOCKS &&
+               n.linkType != SPEEDTEST_MESSAGE_FOUNDHTTP &&
+               !n.proxyStr.empty() && n.proxyStr != "LOG")
+            {
+                needs_kernel = true;
+                break;
+            }
+        }
+        if(needs_kernel && avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS])
+        {
+            std::string yaml = buildAllNodesYAML(allNodes);
+            fileWrite("config.yaml", yaml, true);
+            writeLog(LOG_TYPE_INFO, "Packed " + std::to_string(allNodes.size()) + " nodes into config.yaml; starting mihomo once.");
+            runClient(0);
+            if(mihomoWaitReady(8000))
+            {
+                kernel_started = true;
+                writeLog(LOG_TYPE_INFO, "mihomo Clash API is ready.");
+            }
+            else
+            {
+                writeLog(LOG_TYPE_ERROR, "mihomo did not respond on http://127.0.0.1:9990 within 8s; tests may fail.");
+            }
+        }
+    }
+    // Ensure the kernel is killed when main returns naturally too. Idempotent.
+    defer(if(kernel_started) { writeLog(LOG_TYPE_INFO, "Stopping mihomo at program exit."); killByHandle(); });
+
     if(allNodes.size() > 1) //group or multi-link
     {
         batchTest(allNodes);
@@ -1047,6 +1163,7 @@ int main(int argc, char* argv[])
         writeLog(LOG_TYPE_INFO, "Speedtest will now begin.");
         printMsg(SPEEDTEST_MESSAGE_BEGIN, rpcmode);
         singleTest(allNodes[0]);
+        decorateNodeLabels(allNodes);
         saveResult(allNodes);
         printMsg(SPEEDTEST_MESSAGE_PICSAVING, rpcmode);
         writeLog(LOG_TYPE_INFO, "Now exporting result...");

@@ -63,6 +63,51 @@ void sleep(int interval)
     std::this_thread::sleep_for(std::chrono::milliseconds(interval));
 }
 
+// Replace every Unicode regional-indicator pair (the bytes that render as a
+// flag emoji like 🇭🇰) with a plain bracketed ISO country code ([HK]).
+//
+// Unicode 'A'..'Z' regional indicators sit at U+1F1E6..U+1F1FF, which encode
+// in UTF-8 as F0 9F 87 [A6..BF]. A flag is exactly two of these glyphs back
+// to back, so we look for "F0 9F 87 ?? F0 9F 87 ??" in the byte stream.
+//
+// Reason: the WenQuanYi/Source Han fonts we ship can't render colour flag
+// emojis, so they show up as tofu blocks in the result PNG. The bracketed
+// form is at least readable.
+std::string replaceFlagEmojis(const std::string &s)
+{
+    std::string out;
+    out.reserve(s.size());
+    size_t i = 0;
+    while(i < s.size())
+    {
+        if(i + 8 <= s.size() &&
+           static_cast<unsigned char>(s[i])     == 0xF0 &&
+           static_cast<unsigned char>(s[i + 1]) == 0x9F &&
+           static_cast<unsigned char>(s[i + 2]) == 0x87 &&
+           static_cast<unsigned char>(s[i + 4]) == 0xF0 &&
+           static_cast<unsigned char>(s[i + 5]) == 0x9F &&
+           static_cast<unsigned char>(s[i + 6]) == 0x87)
+        {
+            unsigned char b1 = static_cast<unsigned char>(s[i + 3]);
+            unsigned char b2 = static_cast<unsigned char>(s[i + 7]);
+            if(b1 >= 0xA6 && b1 <= 0xBF && b2 >= 0xA6 && b2 <= 0xBF)
+            {
+                char c1 = 'A' + (b1 - 0xA6);
+                char c2 = 'A' + (b2 - 0xA6);
+                out += '[';
+                out += c1;
+                out += c2;
+                out += ']';
+                i += 8;
+                continue;
+            }
+        }
+        out += s[i];
+        ++i;
+    }
+    return out;
+}
+
 // ANSI code page (GBK on 936) to UTF8
 std::string ACPToUTF8(const std::string &str_src)
 {

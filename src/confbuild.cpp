@@ -5,6 +5,7 @@
 #include "ini_reader.h"
 #include "misc.h"
 #include "nodeinfo.h"
+#include "printout.h"
 
 extern int socksport;
 
@@ -317,5 +318,72 @@ std::string anytlsConstruct(const std::string &group, const std::string &remarks
     out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
     out += echBlock(ech_server_name, "    ");
     out += mihomoTail();
+    return out;
+}
+
+// =============================================================================
+// Plan B: pack ALL nodes into a single mihomo config so we can start the
+// kernel exactly once and switch outbounds via Clash API instead of restarting.
+//
+// `nodes` is mutated: each node.proxyStr (currently a self-contained single
+// node YAML) is replaced with the node's name string ("node-<id>"), which the
+// rest of the program later passes to mihomoSwitchProxy().
+//
+// Direct-connect proxies (SOCKS5 / HTTP) keep their original proxyStr
+// ("user=...&pass=...") because they don't go through mihomo.
+// =============================================================================
+std::string buildAllNodesYAML(std::vector<nodeInfo> &nodes)
+{
+    std::string out = mihomoHeader();
+    std::vector<std::string> proxy_names;
+    proxy_names.reserve(nodes.size());
+
+    for(auto &node : nodes)
+    {
+        if(node.linkType == SPEEDTEST_MESSAGE_FOUNDSOCKS ||
+           node.linkType == SPEEDTEST_MESSAGE_FOUNDHTTP)
+            continue; // direct-connect, no kernel routing
+        if(node.proxyStr.empty())
+            continue; // legacy stub (ss/ssr/vmess/snell)
+
+        // proxyStr currently looks like:
+        //   <header>proxies:\n  - name: node\n    type: vless\n    ...\n<tail>
+        // Slice out the proxies entry (between "proxies:\n" and "proxy-groups:")
+        const std::string proxies_marker = "proxies:\n";
+        const std::string groups_marker = "proxy-groups:";
+        std::string::size_type p = node.proxyStr.find(proxies_marker);
+        std::string::size_type g = node.proxyStr.find(groups_marker);
+        if(p == std::string::npos || g == std::string::npos || g <= p)
+            continue;
+
+        std::string entry = node.proxyStr.substr(p + proxies_marker.size(),
+                                                  g - p - proxies_marker.size());
+
+        // Rename the inline "node" to a unique id so all entries can coexist
+        const std::string old_head = "  - name: node\n";
+        if(entry.compare(0, old_head.size(), old_head) != 0)
+            continue; // unexpected shape, skip safely
+        std::string new_name = "node-" + std::to_string(proxy_names.size());
+        entry.replace(0, old_head.size(), "  - name: " + new_name + "\n");
+
+        out += entry;
+        proxy_names.push_back(new_name);
+        node.proxyStr = new_name; // singleTest will pass this to mihomoSwitchProxy
+    }
+
+    // proxy-groups: a single GLOBAL selector listing every node we packed
+    out += "proxy-groups:\n";
+    out += "  - name: GLOBAL\n";
+    out += "    type: select\n";
+    out += "    proxies:\n";
+    if(proxy_names.empty())
+    {
+        out += "      - DIRECT\n"; // mihomo refuses an empty selector
+    }
+    else
+    {
+        for(const auto &n : proxy_names)
+            out += "      - " + n + "\n";
+    }
     return out;
 }

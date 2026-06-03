@@ -16,6 +16,11 @@ std::string snellConstruct(const std::string &group, const std::string &remarks,
 std::string vlessConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &uuid, const std::string &flow, const std::string &encryption, const std::string &network, const std::string &security, const std::string &sni, const std::string &path, const std::string &host, const std::string &ech_server_name, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool());
 std::string hysteria2Construct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &ports, const std::string &password, const std::string &sni, const std::string &obfs, const std::string &obfsPassword, const std::string &up, const std::string &down, const std::string &ech_server_name, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool(), const std::string &hop_interval = "");
 std::string anytlsConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &password, const std::string &sni, const std::string &ech_server_name, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool());
+
+// Plan B: pack every node into one mihomo config (one selector group GLOBAL).
+// Each node.proxyStr is rewritten to its assigned in-config name string
+// (e.g. "node-3"). Returns the full YAML to write to config.yaml once.
+std::string buildAllNodesYAML(std::vector<nodeInfo> &nodes);
 void explodeVmess(std::string vmess, const std::string &custom_port, nodeInfo &node);
 void explodeSSR(std::string ssr, bool ss_libev, bool libev, const std::string &custom_port, nodeInfo &node);
 void explodeSS(std::string ss, bool libev, const std::string &custom_port, nodeInfo &node);

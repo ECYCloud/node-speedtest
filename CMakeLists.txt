@@ -44,6 +44,7 @@ ADD_EXECUTABLE(stairspeedtest
 	src/printmsg.cpp
 	src/processes.cpp
 	src/renderer.cpp
+	src/renderer_v2.cpp
 	src/rulematch.cpp
 	src/socket.cpp
 	src/speedtestutil.cpp

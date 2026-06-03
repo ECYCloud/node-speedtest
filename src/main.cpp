@@ -93,6 +93,10 @@ int tcping(nodeInfo &node);
 void getTestFile(nodeInfo &node, const std::string &proxy, const std::vector<downloadLink> &downloadFiles, const std::vector<linkMatchRule> &matchRules, const std::string &defaultTestFile);
 void ssrspeed_webserver_routine(const std::string &listen_address, int listen_port);
 std::string get_nat_type_thru_socks5(const std::string &server, uint16_t port, const std::string &username = "", const std::string &password = "", const std::string &stun_server = "stun.l.google.com", uint16_t stun_port = 19302);
+// Forward declaration so the signal handler (defined early in this file) can
+// reuse the same label-decoration pass that batchTest() runs at the end of a
+// normal run.
+static void decorateNodeLabels(std::vector<nodeInfo> &nodes);
 
 //original codes
 
@@ -405,8 +409,19 @@ void signalHandler(int signum)
     {
         if(!allNodes.empty() && hasAnyTestData(allNodes))
         {
+            // If batchTest already finished and called resultInit(), it picks
+            // a "results/<time>.log" path. Switching that to "<time>-partial.log"
+            // keeps interrupted runs visually distinct from completed ones.
             if(resultPath.empty())
                 resultPath = "results" PATH_SLASH + getTime(1) + "-partial.log";
+            else if(resultPath.find("-partial.log") == std::string::npos)
+                resultPath = replace_all_distinct(resultPath, ".log", "-partial.log");
+
+            // Add the same "<serial> · <type> · " / flag-emoji rewrite that the
+            // normal exit path runs. Idempotent, so safe even if batchTest had
+            // already decorated some nodes before the signal.
+            decorateNodeLabels(allNodes);
+
             saveResult(allNodes);
             writeLog(LOG_TYPE_INFO, "Partial result log written to " + resultPath);
             std::cerr << "已保存部分结果日志：" << resultPath << "\n";
@@ -534,20 +549,39 @@ static std::string linkTypeName(int linkType)
     }
 }
 
+// True when remarks already starts with "<digits> · ", produced by a previous
+// decorateNodeLabels() call. Lets us run the routine twice (normal exit AND
+// signal handler) without doubling the prefix.
+static bool isAlreadyDecorated(const std::string &r)
+{
+    // Need at least one digit followed by " · " somewhere reasonably early.
+    std::string::size_type p = r.find(" \xc2\xb7 "); // " · " in UTF-8 (·=U+00B7)
+    if(p == std::string::npos || p == 0 || p > 4)
+        return false;
+    for(std::string::size_type i = 0; i < p; ++i)
+        if(r[i] < '0' || r[i] > '9')
+            return false;
+    // also expect the protocol token followed by another " · "
+    return r.find(" \xc2\xb7 ", p + 5) != std::string::npos;
+}
+
 // Build the display label that will appear in the result PNG / .log.
 // Format: "01 · Vless · [HK] 香港 II · A1 [CF 0.1x]"
 //   - serial: 1-based, zero-padded to 2 digits when total <= 99
 //   - flag emojis are converted to ISO bracket form by replaceFlagEmojis
+//   - idempotent: re-running on already decorated nodes is a no-op
 static void decorateNodeLabels(std::vector<nodeInfo> &nodes)
 {
     int total = static_cast<int>(nodes.size());
     int width = total >= 100 ? 3 : 2;
     for(int i = 0; i < total; ++i)
     {
+        if(isAlreadyDecorated(nodes[i].remarks))
+            continue;
         std::string serial = std::to_string(i + 1);
         while((int)serial.size() < width) serial = "0" + serial;
-        std::string label = serial + " · " + linkTypeName(nodes[i].linkType)
-                          + " · " + replaceFlagEmojis(nodes[i].remarks);
+        std::string label = serial + " \xc2\xb7 " + linkTypeName(nodes[i].linkType)
+                          + " \xc2\xb7 " + replaceFlagEmojis(nodes[i].remarks);
         nodes[i].remarks = label;
     }
 }

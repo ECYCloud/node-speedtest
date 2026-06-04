@@ -293,6 +293,52 @@ int killClient(int client)
     return 0;
 }
 
+// 启动 mihomo 内核并把所有节点打包到一份 config.yaml 里,
+// 同时把每个 node.proxyStr 重写为 "node-N"(buildAllNodesYAML 内部完成),
+// 这样后续 mihomoSwitchProxy 才能用节点名(而不是整个 yaml)切换 outbound。
+//
+// 关键:CLI 模式在 main() 里走过这一步;webserver 模式过去**漏了这一步**,
+// 导致 batchTest 用整个 yaml 当节点名传给 mihomoSwitchProxy,
+// mihomo outbound 始终切不到目标节点 → 全部 socks5 connect not accepted → 测试 N/A。
+//
+// 返回 true 表示 mihomo Clash API 已就绪可以测试;false 表示无需启动或启动超时。
+bool launchMihomoForNodes(std::vector<nodeInfo> &nodes)
+{
+    if(nodes.empty()) return false;
+    bool needs_kernel = false;
+    for(const auto &n : nodes)
+    {
+        if(n.linkType != SPEEDTEST_MESSAGE_FOUNDSOCKS &&
+           n.linkType != SPEEDTEST_MESSAGE_FOUNDHTTP &&
+           !n.proxyStr.empty() && n.proxyStr != "LOG")
+        {
+            needs_kernel = true;
+            break;
+        }
+    }
+    if(!needs_kernel) return false;
+    if(!avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS]) return false;
+
+    // 先杀掉旧的 mihomo,避免 9990 / 65432 端口冲突
+#ifdef _WIN32
+    killProgram("mihomo.exe");
+#else
+    killProgram("mihomo");
+#endif
+
+    std::string yaml = buildAllNodesYAML(nodes); // 内部把每个 node.proxyStr 改成 "node-N"
+    fileWrite("config.yaml", yaml, true);
+    writeLog(LOG_TYPE_INFO, "Packed " + std::to_string(nodes.size()) + " nodes into config.yaml; starting mihomo once.");
+    runClient(0);
+    if(mihomoWaitReady(8000))
+    {
+        writeLog(LOG_TYPE_INFO, "mihomo Clash API is ready.");
+        return true;
+    }
+    writeLog(LOG_TYPE_ERROR, "mihomo did not respond on http://127.0.0.1:9990 within 8s; tests may fail.");
+    return false;
+}
+
 int terminateClient(int client)
 {
     killByHandle();
@@ -1122,37 +1168,7 @@ int main(int argc, char* argv[])
     node_count = allNodes.size();
 
     // ----- Plan B: start mihomo once with every node packed into one config -----
-    bool kernel_started = false;
-    if(!allNodes.empty())
-    {
-        bool needs_kernel = false;
-        for(const auto &n : allNodes)
-        {
-            if(n.linkType != SPEEDTEST_MESSAGE_FOUNDSOCKS &&
-               n.linkType != SPEEDTEST_MESSAGE_FOUNDHTTP &&
-               !n.proxyStr.empty() && n.proxyStr != "LOG")
-            {
-                needs_kernel = true;
-                break;
-            }
-        }
-        if(needs_kernel && avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS])
-        {
-            std::string yaml = buildAllNodesYAML(allNodes);
-            fileWrite("config.yaml", yaml, true);
-            writeLog(LOG_TYPE_INFO, "Packed " + std::to_string(allNodes.size()) + " nodes into config.yaml; starting mihomo once.");
-            runClient(0);
-            if(mihomoWaitReady(8000))
-            {
-                kernel_started = true;
-                writeLog(LOG_TYPE_INFO, "mihomo Clash API is ready.");
-            }
-            else
-            {
-                writeLog(LOG_TYPE_ERROR, "mihomo did not respond on http://127.0.0.1:9990 within 8s; tests may fail.");
-            }
-        }
-    }
+    bool kernel_started = launchMihomoForNodes(allNodes);
     // Ensure the kernel is killed when main returns naturally too. Idempotent.
     defer(if(kernel_started) { writeLog(LOG_TYPE_INFO, "Stopping mihomo at program exit."); killByHandle(); });
 

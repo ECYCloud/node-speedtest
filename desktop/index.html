@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stair Speedtest</title>
+    <style>
+      /* 启动 splash:Tauri release 加载 dist + 后端 sidecar 拉起期间避免黑屏。
+         React 挂载第一帧后由 main.tsx 移除。 */
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: linear-gradient(135deg, #6366F1 0%, #7C3AED 55%, #A78BFA 100%);
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        color: #fff;
+      }
+      .ss-splash {
+        position: fixed; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 18px;
+        transition: opacity 200ms ease;
+      }
+      .ss-splash.hide { opacity: 0; pointer-events: none; }
+      .ss-spinner {
+        width: 36px; height: 36px;
+        border: 3px solid rgba(255,255,255,0.25);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: ss-spin 0.9s linear infinite;
+      }
+      .ss-title { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+      .ss-sub { font-size: 12px; opacity: 0.75; }
+      @keyframes ss-spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+
+  <body>
+    <div id="ss-splash" class="ss-splash">
+      <div class="ss-spinner"></div>
+      <div class="ss-title">Stair Speedtest</div>
+      <div class="ss-sub">正在启动后端引擎…</div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

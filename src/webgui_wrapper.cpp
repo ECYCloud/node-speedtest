@@ -33,6 +33,7 @@ extern unsigned int node_count;
 void addNodes(std::string link, bool multilink);
 void rewriteNodeID(std::vector<nodeInfo> &nodes);
 void batchTest(std::vector<nodeInfo> &nodes);
+bool launchMihomoForNodes(std::vector<nodeInfo> &nodes);
 
 //webui variables
 std::vector<nodeInfo> targetNodes, testedNodes;
@@ -218,6 +219,24 @@ std::string ssrspeed_generate_web_configs(std::vector<nodeInfo> &nodes)
         case SPEEDTEST_MESSAGE_FOUNDTROJAN:
             writer.String("Trojan");
             break;
+        case SPEEDTEST_MESSAGE_FOUNDSNELL:
+            writer.String("Snell");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDSOCKS:
+            writer.String("Socks5");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDHTTP:
+            writer.String("HTTP");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDVLESS:
+            writer.String("VLESS");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDHY2:
+            writer.String("Hysteria2");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDANYTLS:
+            writer.String("AnyTLS");
+            break;
         default:
             writer.String("Unknown");
             writer.EndObject();
@@ -316,6 +335,12 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         suburl = GetMember(json, "url");
         eraseElements(allNodes);
         addNodes(suburl, false);
+        rewriteNodeID(allNodes);
+        // 关键修复:webserver 模式过去漏了这一步 ——
+        // 把所有节点打包到 config.yaml 启动一次 mihomo,并把每个 node.proxyStr
+        // 重写为 "node-N"。否则后续 batchTest 会把整个 yaml 当节点名传给
+        // mihomoSwitchProxy,导致 outbound 切不到节点,全部 socks5 connect not accepted。
+        launchMihomoForNodes(allNodes);
         return ssrspeed_generate_web_configs(allNodes);
     });
 
@@ -330,7 +355,11 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
             if(explodeConfContent(getFormData(request.postdata), override_conf_port, ss_libev, ssr_libev, allNodes) == SPEEDTEST_ERROR_UNRECOGFILE)
                 return "error";
             else
+            {
+                rewriteNodeID(allNodes);
+                launchMihomoForNodes(allNodes); // 见 /readsubscriptions 注释
                 return ssrspeed_generate_web_configs(allNodes);
+            }
         }
     });
 

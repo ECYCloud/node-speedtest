@@ -1,0 +1,49 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.55" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.85"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <!-- 圆角主体背景:Windows 风格的圆角应用图标 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- 内部柔和高光,提升立体感 -->
+  <ellipse cx="320" cy="220" rx="380" ry="180" fill="#FFFFFF" opacity="0.12"/>
+
+  <!-- 三阶递增柱状图(楼梯感 + 速度向上) -->
+  <g filter="url(#shadow)" opacity="0.35">
+    <rect x="208" y="660" width="160" height="160" rx="34"/>
+    <rect x="404" y="500" width="160" height="320" rx="34"/>
+    <rect x="600" y="340" width="160" height="480" rx="34"/>
+  </g>
+  <g>
+    <rect x="208" y="660" width="160" height="160" rx="34" fill="url(#bar)"/>
+    <rect x="404" y="500" width="160" height="320" rx="34" fill="url(#bar)"/>
+    <rect x="600" y="340" width="160" height="480" rx="34" fill="url(#bar)"/>
+  </g>
+
+  <!-- 闪电:速度的视觉锚点 -->
+  <path d="M 540 130
+           L 380 480
+           L 504 480
+           L 460 700
+           L 640 360
+           L 516 360 Z"
+        fill="#FBBF24"
+        stroke="#F59E0B"
+        stroke-width="6"
+        stroke-linejoin="round"/>
+
+  <!-- 底部基线,像速度刻度 -->
+  <rect x="180" y="836" width="640" height="14" rx="7" fill="#FFFFFF" opacity="0.7"/>
+</svg>

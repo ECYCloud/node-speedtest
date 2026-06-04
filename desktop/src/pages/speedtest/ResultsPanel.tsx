@@ -7,12 +7,18 @@ export default function ResultsPanel() {
   const { results, current, status } = useTest();
   const running = status === "running";
 
+  // 当前正在测试的节点的实时进度:gPing 是 HTTPS 延迟(秒),dspeed 是平均速度(字节/秒)。
+  // 后端测速期间会持续更新 dspeed,所以这里直接复用同一份 NodeResult 形状。
+  const cur = current && current.remarks ? current : null;
+  const curPing = cur?.gPing ?? 0;
+  const curSpeed = cur?.dspeed ?? 0;
+
   return (
     <Card className="p-5 flex flex-col">
       <SectionTitle
         desc={
           running
-            ? "正在测试,实时更新"
+            ? "正在测试,实时更新当前节点延迟与下载速度"
             : results.length > 0
               ? `共 ${results.length} 个节点已完成`
               : undefined
@@ -34,10 +40,24 @@ export default function ResultsPanel() {
         测试结果
       </SectionTitle>
 
-      {running && current?.remarks && (
-        <div className="mb-3 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-sm">
-          <span className="text-fg-muted">正在测试:</span>{" "}
-          <span className="font-medium">{current.remarks}</span>
+      {running && cur && (
+        <div className="mb-3 px-4 py-3 rounded-lg bg-primary/5 border border-primary/20 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="md:col-span-1 min-w-0">
+            <div className="text-fg-muted text-xs mb-0.5">正在测试</div>
+            <div className="font-medium truncate">{cur.remarks}</div>
+          </div>
+          <div>
+            <div className="text-fg-muted text-xs mb-0.5">实时延迟</div>
+            <div className="font-medium tabular-nums">
+              {curPing > 0 ? fmtPingSeconds(curPing) : "--"}
+            </div>
+          </div>
+          <div>
+            <div className="text-fg-muted text-xs mb-0.5">实时速度</div>
+            <div className="font-medium tabular-nums">
+              {curSpeed > 0 ? fmtSpeed(curSpeed) : "--"}
+            </div>
+          </div>
         </div>
       )}
 
@@ -54,9 +74,9 @@ export default function ResultsPanel() {
                 <th className="py-2 px-3 bg-bg-elev">备注</th>
                 <th className="py-2 px-3 bg-bg-elev">分组</th>
                 <th className="py-2 px-3 bg-bg-elev">延迟</th>
-                <th className="py-2 px-3 bg-bg-elev">HTTPS</th>
                 <th className="py-2 px-3 bg-bg-elev">丢包</th>
-                <th className="py-2 px-3 bg-bg-elev">下载</th>
+                <th className="py-2 px-3 bg-bg-elev">平均速度</th>
+                <th className="py-2 px-3 bg-bg-elev">最高速度</th>
                 <th className="py-2 px-3 bg-bg-elev">流量</th>
               </tr>
             </thead>
@@ -70,15 +90,19 @@ export default function ResultsPanel() {
                     {r.remarks}
                   </td>
                   <td className="py-2 px-3 text-fg-muted">{r.group}</td>
-                  <td className="py-2 px-3">{fmtPingSeconds(r.ping)}</td>
-                  <td className="py-2 px-3">{fmtPingSeconds(r.gPing)}</td>
-                  <td className="py-2 px-3">
+                  <td className="py-2 px-3 tabular-nums">
+                    {fmtPingSeconds(r.gPing)}
+                  </td>
+                  <td className="py-2 px-3 tabular-nums">
                     {(r.loss * 100).toFixed(0)}%
                   </td>
-                  <td className="py-2 px-3 font-medium">
+                  <td className="py-2 px-3 font-medium tabular-nums">
                     {fmtSpeed(r.dspeed)}
                   </td>
-                  <td className="py-2 px-3 text-fg-muted">
+                  <td className="py-2 px-3 font-medium tabular-nums">
+                    {fmtSpeed(r.dspeedMax ?? 0)}
+                  </td>
+                  <td className="py-2 px-3 text-fg-muted tabular-nums">
                     {fmtBytes(r.trafficUsed)}
                   </td>
                 </tr>

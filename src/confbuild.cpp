@@ -343,11 +343,12 @@ std::string snellConstruct(const std::string &group, const std::string &remarks,
 // New protocols supported by the mihomo kernel.
 // -----------------------------------------------------------------------------
 
-std::string vlessConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &uuid, const std::string &flow, const std::string &encryption, const std::string &network, const std::string &security, const std::string &sni, const std::string &path, const std::string &host, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv)
+std::string vlessConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &uuid, const std::string &flow, const std::string &encryption, const std::string &network, const std::string &security, const std::string &sni, const std::string &path, const std::string &host, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv, const std::string &reality_pbk, const std::string &reality_sid, const std::string &client_fingerprint)
 {
     (void)group; (void)remarks; (void)encryption; (void)tfo;
     std::string net = network.empty() ? std::string("tcp") : network;
-    bool useTLS = (security == "tls" || security == "reality" || security == "xtls");
+    bool useReality = (security == "reality") && !reality_pbk.empty();
+    bool useTLS = useReality || (security == "tls" || security == "xtls");
 
     std::string out = mihomoHeader();
     out += "  - name: node\n";
@@ -363,6 +364,21 @@ std::string vlessConstruct(const std::string &group, const std::string &remarks,
         out += "    servername: " + yq(sni) + "\n";
     out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
     out += "    network: " + net + "\n";
+    // Reality(基于 TLS 的反审查传输):必须同时给出 public-key,short-id 可选。
+    // mihomo 还需要 client-fingerprint,缺省时给 chrome,与主流 Reality 客户端一致。
+    if(useReality)
+    {
+        out += "    client-fingerprint: " + (client_fingerprint.empty() ? std::string("chrome") : client_fingerprint) + "\n";
+        out += "    reality-opts:\n";
+        out += "      public-key: " + yq(reality_pbk) + "\n";
+        if(!reality_sid.empty())
+            out += "      short-id: " + yq(reality_sid) + "\n";
+    }
+    else if(!client_fingerprint.empty())
+    {
+        // 非 Reality 也允许指定 fingerprint(uTLS 伪装)
+        out += "    client-fingerprint: " + client_fingerprint + "\n";
+    }
     if(net == "ws")
     {
         out += "    ws-opts:\n";

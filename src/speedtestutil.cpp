@@ -1139,6 +1139,7 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
         {
             group = VLESS_DEFAULT_GROUP;
             std::string uuid_v, vless_net = "tcp", vless_sni, vless_path, vless_host, vless_security, vless_flow;
+            std::string reality_pbk, reality_sid, client_fp;
             singleproxy["uuid"] >>= uuid_v;
             if(singleproxy["network"].IsDefined())
                 singleproxy["network"] >>= vless_net;
@@ -1148,12 +1149,21 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
                 singleproxy["sni"] >>= vless_sni;
             if(singleproxy["flow"].IsDefined())
                 singleproxy["flow"] >>= vless_flow;
+            if(singleproxy["client-fingerprint"].IsDefined())
+                singleproxy["client-fingerprint"] >>= client_fp;
             // security: tls/reality/none. mihomo accepts a bool `tls:` field
             // and an optional reality-opts block. We treat anything truthy as tls.
             if(safe_as<std::string>(singleproxy["tls"]) == "true")
                 vless_security = "tls";
             if(singleproxy["reality-opts"].IsDefined())
+            {
                 vless_security = "reality";
+                // 关键修复:之前只设置了 security,没读取 public-key/short-id,
+                // 导致 vlessConstruct 拼出来的 yaml 缺少 reality-opts 块,mihomo 直接连不上
+                singleproxy["reality-opts"]["public-key"] >>= reality_pbk;
+                if(singleproxy["reality-opts"]["short-id"].IsDefined())
+                    singleproxy["reality-opts"]["short-id"] >>= reality_sid;
+            }
             if(vless_net == "ws" && singleproxy["ws-opts"].IsDefined())
             {
                 singleproxy["ws-opts"]["path"] >>= vless_path;
@@ -1165,7 +1175,7 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
                 singleproxy["grpc-opts"]["grpc-service-name"] >>= vless_path;
             }
             node.linkType = SPEEDTEST_MESSAGE_FOUNDVLESS;
-            node.proxyStr = vlessConstruct(group, ps, server, port, uuid_v, vless_flow, "none", vless_net, vless_security, vless_sni, vless_path, vless_host, ech_server_name, udp, tfo, scv);
+            node.proxyStr = vlessConstruct(group, ps, server, port, uuid_v, vless_flow, "none", vless_net, vless_security, vless_sni, vless_path, vless_host, ech_server_name, udp, tfo, scv, reality_pbk, reality_sid, client_fp);
             break;
         }
         case "hysteria2"_hash:
@@ -2163,6 +2173,11 @@ void explodeVLESS(const std::string &link, const std::string &custom_port, nodeI
     std::string ws_host   = UrlDecode(getUrlArg(query, "host"));
     std::string flow      = UrlDecode(getUrlArg(query, "flow"));
     std::string ech_sn    = parseEchServerName(getUrlArg(query, "ech"));
+    // Reality 字段:VLESS Reality 标准链接里走 pbk(public key)/sid(short id)/fp(fingerprint),
+    // 之前缺失导致 reality 节点完全无法测试。
+    std::string reality_pbk = UrlDecode(getUrlArg(query, "pbk"));
+    std::string reality_sid = UrlDecode(getUrlArg(query, "sid"));
+    std::string client_fp   = UrlDecode(getUrlArg(query, "fp"));
     std::string scv_arg   = getUrlArg(query, "allowInsecure");
     tribool scv;
     if(!scv_arg.empty()) scv = (scv_arg == "1" || scv_arg == "true");
@@ -2173,7 +2188,7 @@ void explodeVLESS(const std::string &link, const std::string &custom_port, nodeI
     node.remarks = remark;
     node.server = host;
     node.port = (unsigned short)to_int(port, 1);
-    node.proxyStr = vlessConstruct(VLESS_DEFAULT_GROUP, remark, host, port, uuid, flow, "none", type.empty() ? "tcp" : type, security, sni, path, ws_host, ech_sn, tribool(), tribool(), scv);
+    node.proxyStr = vlessConstruct(VLESS_DEFAULT_GROUP, remark, host, port, uuid, flow, "none", type.empty() ? "tcp" : type, security, sni, path, ws_host, ech_sn, tribool(), tribool(), scv, reality_pbk, reality_sid, client_fp);
 }
 
 void explodeHysteria2(const std::string &link, const std::string &custom_port, nodeInfo &node)

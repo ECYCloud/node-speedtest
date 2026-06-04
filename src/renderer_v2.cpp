@@ -33,6 +33,8 @@ extern int image_scale;
 extern std::vector<color> colorgroup;
 extern std::vector<int> bounds;
 extern std::string mihomo_kernel_version; // real kernel version for footer
+extern std::string g_local_country, g_local_region, g_local_city, g_local_isp;
+extern std::string g_test_start_time, g_test_tz_label;
 
 // Forward decls of helpers defined in renderer.cpp itself:
 bool comparer(nodeInfo &a, nodeInfo &b);
@@ -191,9 +193,8 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
 
     int type_w = col_for("类型",
                          [&](int i){ return protoLabel(nodes[i].linkType); }, 0);
-    int http_w = col_for("HTTP延迟",
-                         [&](int i){ return formatPing(nodes[i].avgPing); }, 0);
-    int https_w= col_for("HTTPS延迟",
+    // 单列延迟 — 已合并 HTTP/HTTPS 两列(2025-10),HTTPS generate_204 足以反映链路质量
+    int ping_w = col_for("延迟",
                          [&](int i){ return formatPing(nodes[i].sitePing); }, 0);
     int avg_w  = col_for("平均速度",
                          [&](int i){ return nodes[i].avgSpeed; }, 0);
@@ -201,7 +202,7 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
                          [&](int i){ return nodes[i].maxSpeed; }, 0);
     int spark_w = std::max(spark_min, measure(probe, font, fs, "每秒速度") + cell_pad);
 
-    int total_width = idx_col_w + name_w + type_w + http_w + https_w
+    int total_width = idx_col_w + name_w + type_w + ping_w
                     + avg_w + max_w + spark_w;
 
     // Make sure the title fits horizontally; if not, grow the name column.
@@ -213,7 +214,7 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     }
 
     int total_height = title_h + row_h /*header*/ + row_h * n_count
-                     + foot_h * 4 + 10 * S;
+                     + foot_h * 5 + 10 * S; // 多预留一行给"测试机:..."
 
     // -------- create PNG canvas --------
     pngwriter png(total_width, total_height, 1.0, pngname.data());
@@ -239,17 +240,16 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
         plotText(png, font, font_size, x, y, txt, r, g, b);
     };
 
-    // Column x positions (8 columns -> 9 boundaries).
-    int col_x[9];
+    // Column x positions (7 columns -> 8 boundaries).
+    int col_x[8];
     col_x[0] = 0;
     col_x[1] = col_x[0] + idx_col_w;
     col_x[2] = col_x[1] + name_w;
     col_x[3] = col_x[2] + type_w;
-    col_x[4] = col_x[3] + http_w;
-    col_x[5] = col_x[4] + https_w;
-    col_x[6] = col_x[5] + avg_w;
-    col_x[7] = col_x[6] + max_w;
-    col_x[8] = col_x[7] + spark_w;
+    col_x[4] = col_x[3] + ping_w;
+    col_x[5] = col_x[4] + avg_w;
+    col_x[6] = col_x[5] + max_w;
+    col_x[7] = col_x[6] + spark_w;
 
     int yt = 0; // running "top y" cursor
 
@@ -269,11 +269,10 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     cellText(col_x[0], col_x[1], yt, "序号",      fs, TX, TY, TZ);
     cellText(col_x[1], col_x[2], yt, "节点名称",  fs, TX, TY, TZ);
     cellText(col_x[2], col_x[3], yt, "类型",      fs, TX, TY, TZ);
-    cellText(col_x[3], col_x[4], yt, "HTTP延迟",  fs, TX, TY, TZ);
-    cellText(col_x[4], col_x[5], yt, "HTTPS延迟", fs, TX, TY, TZ);
-    cellText(col_x[5], col_x[6], yt, "平均速度",  fs, TX, TY, TZ);
-    cellText(col_x[6], col_x[7], yt, "最高速度",  fs, TX, TY, TZ);
-    cellText(col_x[7], col_x[8], yt, "每秒速度",  fs, TX, TY, TZ);
+    cellText(col_x[3], col_x[4], yt, "延迟",      fs, TX, TY, TZ);
+    cellText(col_x[4], col_x[5], yt, "平均速度",  fs, TX, TY, TZ);
+    cellText(col_x[5], col_x[6], yt, "最高速度",  fs, TX, TY, TZ);
+    cellText(col_x[6], col_x[7], yt, "每秒速度",  fs, TX, TY, TZ);
     yt += row_h;
 
     // -------- Data rows --------
@@ -307,34 +306,27 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
         // Type: plain centred black text.
         cellText(col_x[2], col_x[3], yt, protoLabel(n.linkType), fs, TX, TY, TZ);
 
-        // HTTP latency (TCP ping): traffic-light bg + black text.
-        {
-            double lr, lg, lb; latencyBg(n.avgPing, lr, lg, lb);
-            cellRect(col_x[3], col_x[4], yt, row_h, lr, lg, lb);
-            cellText(col_x[3], col_x[4], yt, formatPing(n.avgPing), fs, TX, TY, TZ);
-        }
-
-        // HTTPS latency (real generate_204 request): traffic-light bg + black.
+        // 延迟(HTTPS generate_204):红绿灯背景 + 黑色文字
         {
             double lr, lg, lb; latencyBg(n.sitePing, lr, lg, lb);
-            cellRect(col_x[4], col_x[5], yt, row_h, lr, lg, lb);
-            cellText(col_x[4], col_x[5], yt, formatPing(n.sitePing), fs, TX, TY, TZ);
+            cellRect(col_x[3], col_x[4], yt, row_h, lr, lg, lb);
+            cellText(col_x[3], col_x[4], yt, formatPing(n.sitePing), fs, TX, TY, TZ);
         }
 
         // Avg speed cell: gradient bg + black text.
         {
             color bg; getSpeedColor(n.avgSpeed, &bg);
-            cellRect(col_x[5], col_x[6], yt, row_h,
+            cellRect(col_x[4], col_x[5], yt, row_h,
                      bg.red / 65535.0, bg.green / 65535.0, bg.blue / 65535.0);
-            cellText(col_x[5], col_x[6], yt, n.avgSpeed, fs, TX, TY, TZ);
+            cellText(col_x[4], col_x[5], yt, n.avgSpeed, fs, TX, TY, TZ);
         }
 
         // Max speed cell.
         {
             color bg; getSpeedColor(n.maxSpeed, &bg);
-            cellRect(col_x[6], col_x[7], yt, row_h,
+            cellRect(col_x[5], col_x[6], yt, row_h,
                      bg.red / 65535.0, bg.green / 65535.0, bg.blue / 65535.0);
-            cellText(col_x[6], col_x[7], yt, n.maxSpeed, fs, TX, TY, TZ);
+            cellText(col_x[5], col_x[6], yt, n.maxSpeed, fs, TX, TY, TZ);
         }
 
         // Per-second sparkline of rawSpeed[20] (pink bars).
@@ -342,13 +334,13 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
             unsigned long long peak = 0;
             for(int j = 0; j < 20; ++j)
                 if(n.rawSpeed[j] > peak) peak = n.rawSpeed[j];
-            int sx0 = col_x[7] + 6 * S;
+            int sx0 = col_x[6] + 6 * S;
             int sy0 = rowY(yt + row_h - 3 * S);
-            int sw  = (col_x[8] - col_x[7]) - 12 * S;
+            int sw  = (col_x[7] - col_x[6]) - 12 * S;
             int sh  = row_h - 8 * S;
             if(peak == 0)
             {
-                cellText(col_x[7], col_x[8], yt, "-", fs, TX, TY, TZ);
+                cellText(col_x[6], col_x[7], yt, "-", fs, TX, TY, TZ);
             }
             else
             {
@@ -371,7 +363,7 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     }
 
     // -------- Vertical column separators across header + data rows --------
-    for(int c = 1; c < 8; ++c)
+    for(int c = 1; c < 7; ++c)
         png.line(col_x[c], rowY(rows_top), col_x[c], rowY(rows_bottom),
                  0.85, 0.86, 0.88);
 
@@ -409,9 +401,32 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
         yt += foot_h;
     }
 
-    footLine("HTTP / HTTPS 延迟均经代理实测，复用连接预热后取多次平均，已排除 TLS 握手耗时",
+    footLine("延迟为 HTTPS generate_204 实测，复用连接预热后取多次平均，已排除 TLS 握手耗时",
              10 * S, 0.45, 0.45, 0.45);
     yt += foot_h;
+
+    // 测试机出口位置 + 运营商:四个字段拼成中文地址,任一非空就渲染该行。
+    {
+        std::string parts;
+        auto join = [&](const std::string &s){
+            if(s.empty()) return;
+            if(!parts.empty()) parts += " ";
+            parts += s;
+        };
+        join(g_local_country);
+        join(g_local_region);
+        join(g_local_city);
+        if(!g_local_isp.empty())
+        {
+            if(!parts.empty()) parts += " · ";
+            parts += g_local_isp;
+        }
+        if(!parts.empty())
+        {
+            footLine("测试机：" + parts, 10 * S, 0.45, 0.45, 0.45);
+            yt += foot_h;
+        }
+    }
 
     std::string meta = "主体 = Stair Speedtest Reborn " VERSION
                        "   内核 = mihomo " + mihomo_kernel_version +
@@ -420,7 +435,12 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     footLine(meta, 10 * S, 0.45, 0.45, 0.45);
     yt += foot_h;
 
-    std::string gen = "生成时间：" + getTime(3) +
+    // 测试时间(开始时间)+ 时区,而不是图片生成的瞬时。
+    // 没填时回退到当前时间,确保独立预览程序也有值。
+    std::string when = g_test_start_time.empty() ? getTime(3) : g_test_start_time;
+    if(!g_test_tz_label.empty())
+        when += " " + g_test_tz_label;
+    std::string gen = "测试时间：" + when +
                       "     消耗流量：" + speedCalc(static_cast<double>(total_traffic)) +
                       "     测试时长：" + secondToString(test_duration);
     footLine(gen, 10 * S, 0.45, 0.45, 0.45);

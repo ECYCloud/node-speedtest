@@ -69,10 +69,37 @@ void logInit(bool rpcmode)
     writeLog(LOG_TYPE_INFO, log_header);
 }
 
-void resultInit()
+// 文件名安全化:把 Windows / 通用文件系统的非法字符替换成下划线,并去掉首尾空白。
+// 仅供 results/ 目录下的文件名使用,不需要 URL 编码级别的转义。
+static std::string sanitizeForFilename(const std::string &s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for(char c : s)
+    {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if(c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' ||
+           c == '"' || c == '<' || c == '>' || c == '|' || uc < 0x20)
+            out += '_';
+        else
+            out += c;
+    }
+    // 去掉首尾空白和点(Windows 不允许目录名以点结尾)
+    while(!out.empty() && (out.back() == ' ' || out.back() == '.'))
+        out.pop_back();
+    while(!out.empty() && (out.front() == ' ' || out.front() == '.'))
+        out.erase(out.begin(), out.begin() + 1);
+    return out;
+}
+
+void resultInit(const std::string &group_name)
 {
     curtime = getTime(1);
-    resultPath = "results" PATH_SLASH + curtime + ".log";
+    std::string safe = sanitizeForFilename(group_name);
+    if(safe.empty())
+        resultPath = "results" PATH_SLASH + curtime + ".log";
+    else
+        resultPath = "results" PATH_SLASH + safe + "-" + curtime + ".log";
 }
 
 void writeLog(int type, std::string content, int level)

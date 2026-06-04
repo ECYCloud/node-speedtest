@@ -145,6 +145,9 @@ void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInf
     writer.EndObject();
     writer.Key("dspeed");
     writer.Double(ssrspeed_get_speed_number(node.avgSpeed));
+    // 最高瞬时速度,与 dspeed 同形,前端结果表展示"最高速度"列。
+    writer.Key("dspeedMax");
+    writer.Double(ssrspeed_get_speed_number(node.maxSpeed));
     writer.Key("trafficUsed");
     writer.Int(node.totalRecvBytes);
 }

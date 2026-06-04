@@ -4,42 +4,42 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Stair Speedtest</title>
+    <script>
+      // 主题预设:必须在 React 挂载前同步执行,这样 body 第一帧就是最终主题色,
+      // 不会出现"白色 → 紫色 splash → 深色界面"的多段闪烁。
+      // 与 src/store/theme.ts 用同一个 localStorage key。
+      (function () {
+        try {
+          var saved = localStorage.getItem("ssr-desktop-theme");
+          var dark =
+            saved === "dark" ||
+            (!saved &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {
+          /* localStorage 不可用就走默认浅色 */
+        }
+      })();
+    </script>
     <style>
-      /* 启动 splash:Tauri release 加载 dist + 后端 sidecar 拉起期间避免黑屏。
-         React 挂载第一帧后由 main.tsx 移除。 */
+      /* 启动期(webview 加载 dist + 后端 sidecar 拉起)直接显示主题背景色,
+         不再叠加 splash overlay — 配合 tauri.conf.json 的 visible:false,
+         窗口直到 React 第一次渲染完成才会显示,杜绝多窗口闪烁。 */
       html, body { margin: 0; height: 100%; }
       body {
-        background: linear-gradient(135deg, #6366F1 0%, #7C3AED 55%, #A78BFA 100%);
+        background: #f8fafc;
         font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-        color: #fff;
+        color: #0f172a;
       }
-      .ss-splash {
-        position: fixed; inset: 0;
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        gap: 18px;
-        transition: opacity 200ms ease;
+      html.dark body {
+        background: #090d18;
+        color: #e2e8f0;
       }
-      .ss-splash.hide { opacity: 0; pointer-events: none; }
-      .ss-spinner {
-        width: 36px; height: 36px;
-        border: 3px solid rgba(255,255,255,0.25);
-        border-top-color: #fff;
-        border-radius: 50%;
-        animation: ss-spin 0.9s linear infinite;
-      }
-      .ss-title { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
-      .ss-sub { font-size: 12px; opacity: 0.75; }
-      @keyframes ss-spin { to { transform: rotate(360deg); } }
     </style>
   </head>
 
   <body>
-    <div id="ss-splash" class="ss-splash">
-      <div class="ss-spinner"></div>
-      <div class="ss-title">Stair Speedtest</div>
-      <div class="ss-sub">正在启动后端引擎…</div>
-    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

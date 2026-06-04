@@ -27,6 +27,9 @@ interface TestStore {
   typeFilter: Set<string>;
   loadingConfigs: boolean;
   error: string | null;
+  /** 分组名:用于 PNG 标题、历史记录文件名前缀、统一所有节点的 group 字段。
+      在导入节点时填写,留空则后端用第一个节点的协议默认 group。 */
+  group: string;
 
   loadSubscription: (url: string) => Promise<void>;
   loadFileConfig: (fileName: string, fileBytes: number[]) => Promise<void>;
@@ -36,17 +39,16 @@ interface TestStore {
   clearSelect: () => void;
   setFilter: (s: string) => void;
   toggleType: (t: string) => void;
+  setGroup: (g: string) => void;
   startTest: (
     testMode: StartParams["testMode"],
     sortMethod: string,
-    group: string,
     colors: string
   ) => Promise<void>;
   /** 恢复测试:基于当前 results 跳过已测节点,只测剩下的(未测 + 失败的) */
   resumeTest: (
     testMode: StartParams["testMode"],
     sortMethod: string,
-    group: string,
     colors: string
   ) => Promise<void>;
   stopTest: () => Promise<void>;
@@ -63,6 +65,7 @@ export const useTest = create<TestStore>((set, get) => ({
   typeFilter: new Set(),
   loadingConfigs: false,
   error: null,
+  group: "",
 
   async loadSubscription(url) {
     set({ loadingConfigs: true, error: null });
@@ -123,9 +126,12 @@ export const useTest = create<TestStore>((set, get) => ({
     s.has(t) ? s.delete(t) : s.add(t);
     set({ typeFilter: s });
   },
+  setGroup(g) {
+    set({ group: g });
+  },
 
-  async startTest(testMode, sortMethod, group, colors) {
-    const { configs, selected } = get();
+  async startTest(testMode, sortMethod, colors) {
+    const { configs, selected, group } = get();
     const picked = [...selected]
       .sort((a, b) => a - b)
       .map((i) => configs[i])
@@ -133,7 +139,7 @@ export const useTest = create<TestStore>((set, get) => ({
     if (!picked.length) return;
     set({ status: "running", results: [], current: null, error: null });
     try {
-      await api.start({ configs: picked, testMode, sortMethod, group, colors });
+      await api.start({ configs: picked, testMode, sortMethod, group: group.trim(), colors });
     } catch (e) {
       set({ error: (e as Error).message, status: "stopped" });
     }
@@ -153,8 +159,8 @@ export const useTest = create<TestStore>((set, get) => ({
 
   /** 恢复测试:从 selected 中过滤掉已经在 results 里的节点(按 remarks 匹配),
       只把剩下的提交给后端。前端不清空 results,polling 时会把新结果合并进来。 */
-  async resumeTest(testMode, sortMethod, group, colors) {
-    const { configs, selected, results } = get();
+  async resumeTest(testMode, sortMethod, colors) {
+    const { configs, selected, results, group } = get();
     const tested = new Set(results.map((r) => r.remarks));
     const picked = [...selected]
       .sort((a, b) => a - b)
@@ -163,7 +169,7 @@ export const useTest = create<TestStore>((set, get) => ({
     if (!picked.length) return;
     set({ status: "running", current: null, error: null });
     try {
-      await api.start({ configs: picked, testMode, sortMethod, group, colors });
+      await api.start({ configs: picked, testMode, sortMethod, group: group.trim(), colors });
     } catch (e) {
       set({ error: (e as Error).message, status: "stopped" });
     }

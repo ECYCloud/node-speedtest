@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, History, Settings, Sun, Moon, Sparkles } from "lucide-react";
+import { Activity, History, Settings, Sun, Moon, Sparkles, Compass } from "lucide-react";
 import { useTheme } from "./store/theme";
 import { startPolling } from "./store/test";
 import { cn } from "./lib/cn";
@@ -7,12 +7,14 @@ import StatusPill from "./components/StatusPill";
 import Speedtest from "./pages/Speedtest";
 import HistoryPage from "./pages/History";
 import SettingsPage from "./pages/SettingsPage";
+import Recommend from "./pages/Recommend";
 
-type View = "speedtest" | "history" | "settings";
+type View = "speedtest" | "history" | "recommend" | "settings";
 
 const NAV: { key: View; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
   { key: "speedtest", label: "测速", icon: Activity },
   { key: "history", label: "历史记录", icon: History },
+  { key: "recommend", label: "机场推荐", icon: Compass },
   { key: "settings", label: "设置", icon: Settings },
 ];
 
@@ -95,6 +97,7 @@ export default function App() {
         <main className="flex-1 flex flex-col p-6 overflow-auto min-h-0">
           {view === "speedtest" && <Speedtest />}
           {view === "history" && <HistoryPage />}
+          {view === "recommend" && <Recommend />}
           {view === "settings" && <SettingsPage />}
         </main>
       </div>

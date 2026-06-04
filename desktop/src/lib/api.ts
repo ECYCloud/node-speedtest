@@ -85,6 +85,8 @@ export interface NodeResult {
   gPingLoss: number;
   geoIP: { inbound: GeoBlock; outbound: GeoBlock };
   dspeed: number;
+  /** 最高瞬时速度,字节/秒;后端 webgui_wrapper.json_write_node 写入。 */
+  dspeedMax: number;
   trafficUsed: number;
 }
 

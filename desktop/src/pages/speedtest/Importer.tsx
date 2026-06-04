@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Link2, FileUp, Loader2 } from "lucide-react";
+import { Link2, FileUp, Loader2, ClipboardPaste, Tag } from "lucide-react";
 import { useTest } from "../../store/test";
 import { Button, Card, Input, SectionTitle } from "../../components/ui";
 
@@ -7,7 +7,7 @@ export default function Importer() {
   const [url, setUrl] = useState("");
   const [tab, setTab] = useState<"sub" | "file">("sub");
   const fileRef = useRef<HTMLInputElement>(null);
-  const { loadSubscription, loadFileConfig, loadingConfigs, configs, error } =
+  const { loadSubscription, loadFileConfig, loadingConfigs, configs, error, group, setGroup } =
     useTest();
 
   async function onLoadSub() {
@@ -23,11 +23,34 @@ export default function Importer() {
     await loadFileConfig(file.name, bytes);
   }
 
+  // 从系统剪贴板粘贴订阅链接 — Webview 在 release 模式下默认禁用 navigator.clipboard,
+  // 这里捕获异常优雅降级,用户仍可手动 Ctrl+V 到输入框。
+  async function onPasteUrl() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) setUrl(text.trim());
+    } catch {
+      /* 没权限或非安全上下文,忽略 */
+    }
+  }
+
   return (
     <Card className="p-5">
-      <SectionTitle desc="支持订阅链接、本地配置文件(SSR / V2Ray / Trojan / Clash 等)">
+      <SectionTitle desc="支持订阅链接与本地配置文件">
         导入节点
       </SectionTitle>
+
+      {/* 分组名:作为 PNG 标题 / 历史文件名前缀,留空则用第一个节点的协议默认 group */}
+      <div className="flex items-center gap-2 mb-3">
+        <Tag size={16} className="text-fg-muted shrink-0" />
+        <Input
+          placeholder="分组名(可选,例:机场A)"
+          value={group}
+          onChange={(e) => setGroup(e.target.value)}
+          disabled={loadingConfigs}
+          className="min-w-0 flex-1"
+        />
+      </div>
 
       <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-border/40 mb-4 text-sm">
         {(["sub", "file"] as const).map((k) => (
@@ -57,6 +80,15 @@ export default function Importer() {
             disabled={loadingConfigs}
             className="min-w-0 flex-1"
           />
+          <Button
+            variant="ghost"
+            disabled={loadingConfigs}
+            onClick={onPasteUrl}
+            title="从剪贴板粘贴"
+            className="shrink-0"
+          >
+            <ClipboardPaste size={14} />
+          </Button>
           <Button
             variant="primary"
             disabled={loadingConfigs || !url.trim()}

@@ -92,13 +92,14 @@ export default function History() {
       title: "选择导出位置",
     });
     if (!dir || typeof dir !== "string") return;
-    const prefix = window.prompt("输入分组前缀(将作为文件名前缀,可留空):", "") ?? "";
+    // 文件名已经在生成时带了"<分组名>-<时间戳>",这里不再追加 prefix,
+    // 否则会出现"分组名-分组名-时间戳"的重复前缀。
     setBusy(true);
     try {
       const files = await invoke<string[]>("export_history", {
         name: active.name,
         targetDir: dir,
-        prefix,
+        prefix: "",
       });
       setTip(`已导出 ${files.length} 个文件到 ${dir}`);
     } catch (e) {
@@ -143,9 +144,9 @@ export default function History() {
           历史记录
         </SectionTitle>
         {confirmClear && (
-          <div className="mb-2 p-2.5 rounded-lg bg-danger/10 border border-danger/30 text-xs">
-            <div className="flex items-center gap-1.5 text-danger font-medium mb-1.5">
-              <AlertCircle size={12} />
+          <div className="mb-2 p-3 rounded-lg bg-danger/10 border border-danger/30">
+            <div className="flex items-center gap-1.5 text-danger font-medium text-sm mb-2">
+              <AlertCircle size={14} />
               确认清空全部历史?
             </div>
             <div className="flex gap-2">
@@ -169,7 +170,7 @@ export default function History() {
           </div>
         )}
         {tip && (
-          <div className="mb-2 px-2.5 py-1.5 rounded-md bg-success/10 text-success text-xs">
+          <div className="mb-2 px-3 py-2 rounded-md bg-success/10 text-success text-xs">
             {tip}
           </div>
         )}
@@ -189,7 +190,7 @@ export default function History() {
                 className="w-full text-left px-3 py-2.5"
               >
                 <div className="text-sm font-medium truncate">{it.name}</div>
-                <div className="text-xs text-fg-muted mt-1 flex items-center gap-2">
+                <div className="text-xs text-fg-muted mt-1 flex items-center gap-2 tabular-nums">
                   <span>{fmtTime(it.modified_ms)}</span>
                   <span>·</span>
                   <span>{fmtBytes(it.size)}</span>

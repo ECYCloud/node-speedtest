@@ -55,7 +55,14 @@ fn engine_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// 启动前同步 bundled engine 到 runtime engine。
 /// 仅在 release 模式下执行;dev 模式 runtime = bundled,跳过。
-/// 同步策略:首次安装/版本升级 → 全量;已存在 → 校验关键文件并按需更新。
+///
+/// 升级判定:对比 bundled 与已安装 stairspeedtest.exe 的 mtime+size。
+/// 之前用 CARGO_PKG_VERSION 字符串戳判定 — 开发期版本号不变就永远不同步,
+/// 用户必须"卸载 + 删数据"才能拿到最新二进制。改成文件指纹后,只要后端真的
+/// 有变化就自动同步,不再依赖 0.1.0 → 0.1.1 这种语义化升级。
+///
+/// 用户的 logs/ 与 results/(历史记录、测试日志)始终保留,只覆盖 exe / DLL /
+/// tools / pref.ini 这些只读资产。
 fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
     #[cfg(debug_assertions)]
     {
@@ -66,20 +73,26 @@ fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
     {
         let src = bundled_engine_dir(app)?;
         let dst = runtime_engine_dir(app)?;
-        let stamp = dst.join(".version");
-        let want = env!("CARGO_PKG_VERSION");
-        // 已经同步过同版本就跳过(冷启动快)
-        if let Ok(cur) = std::fs::read_to_string(&stamp) {
-            if cur.trim() == want && dst.join("stairspeedtest.exe").exists() {
-                return Ok(());
+        let src_exe = src.join("stairspeedtest.exe");
+        let dst_exe = dst.join("stairspeedtest.exe");
+
+        // 取 (size, mtime) 作为指纹,任一不同就重新同步
+        let fingerprint = |p: &std::path::Path| -> Option<(u64, std::time::SystemTime)> {
+            let m = std::fs::metadata(p).ok()?;
+            Some((m.len(), m.modified().ok()?))
+        };
+        if let (Some(a), Some(b)) = (fingerprint(&src_exe), fingerprint(&dst_exe)) {
+            if a == b {
+                return Ok(()); // 两侧 exe 完全一致,无需同步
             }
         }
+
         std::fs::create_dir_all(&dst).map_err(|e| format!("创建运行时目录失败: {e}"))?;
+        // 只同步只读资产,跳过用户数据(logs / results / cache.db)
         copy_dir_excluding(&src, &dst, &["logs", "results"])?;
-        // 用户已有的 logs/results 不动,只在不存在时创建
         let _ = std::fs::create_dir_all(dst.join("logs"));
         let _ = std::fs::create_dir_all(dst.join("results"));
-        std::fs::write(&stamp, want).map_err(|e| format!("写版本戳失败: {e}"))?;
+        // 旧 cache.db 不会清,mihomo 会自己处理过期条目
         Ok(())
     }
 }
@@ -209,6 +222,17 @@ fn kill_backend_tree(child: &mut Child) {
 #[tauri::command]
 fn backend_url() -> &'static str {
     BACKEND_URL
+}
+
+/// 启动闪烁修复:tauri.conf.json 设了 visible:false,窗口启动时不可见,
+/// 等前端 React 完成首屏渲染后调这个命令把主窗口显示出来 + 设置焦点。
+/// 这样用户看到的第一帧就是渲染好的 splash / 主界面,不再经历"白屏 → 紫屏"的闪烁。
+#[tauri::command]
+fn show_main_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
 }
 
 /// 与后端 127.0.0.1 通信的专用 reqwest 客户端。
@@ -433,6 +457,50 @@ struct GeoIpInfo {
     isp: String,
 }
 
+/// ip-api.com 返回的 ISP 字段是英文(China Telecom backbone 等),与 C++ 后端
+/// translateIsp() 保持一致的关键词映射,前后端展示文案统一为中文。
+fn translate_isp(raw: &str) -> String {
+    if raw.is_empty() {
+        return raw.to_string();
+    }
+    let lower = raw.to_lowercase();
+    // 顺序敏感:长关键词先匹配
+    let rules: &[(&str, &str)] = &[
+        ("chinanet", "中国电信"),
+        ("china telecom", "中国电信"),
+        ("chinaunicom", "中国联通"),
+        ("china unicom", "中国联通"),
+        ("china169", "中国联通"),
+        ("unicom", "中国联通"),
+        ("chinamobile", "中国移动"),
+        ("china mobile", "中国移动"),
+        ("cmcc", "中国移动"),
+        ("china broadcast", "中国广电"),
+        ("chinabroadnet", "中国广电"),
+        ("cbn", "中国广电"),
+        ("great wall broadband", "长城宽带"),
+        ("great wall", "长城宽带"),
+        ("dr.peng", "鹏博士"),
+        ("dr peng", "鹏博士"),
+        ("cernet", "教育网"),
+        ("education network", "教育网"),
+        ("cstnet", "中国科技网"),
+        ("cnix", "中国国际通信网"),
+        ("cloudflare", "Cloudflare"),
+        ("amazon", "Amazon AWS"),
+        ("google", "Google"),
+        ("microsoft", "Microsoft Azure"),
+        ("akamai", "Akamai"),
+        ("hurricane electric", "Hurricane Electric"),
+    ];
+    for (kw, zh) in rules {
+        if lower.contains(kw) {
+            return zh.to_string();
+        }
+    }
+    raw.to_string()
+}
+
 /// 查询本机出口公网 IP 与地理位置/运营商。
 /// 用 ip-api.com 中文接口:返回 IPv4 出口的 country / regionName / city / isp。
 /// 失败时返回空字段(让 UI 优雅降级)。
@@ -470,7 +538,7 @@ async fn get_my_ip_info() -> Result<GeoIpInfo, String> {
         country: pick("country"),
         region: pick("regionName"),
         city: pick("city"),
-        isp: pick("isp"),
+        isp: translate_isp(&pick("isp")),
     })
 }
 
@@ -602,6 +670,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_url,
+            show_main_window,
             api_get,
             api_post_json,
             api_post_file,

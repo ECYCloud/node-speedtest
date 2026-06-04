@@ -4,15 +4,15 @@ import { useTest } from "../../store/test";
 import { Button, Card, Select, SectionTitle } from "../../components/ui";
 
 const TEST_MODES = [
-  { value: "ALL", label: "完整测速(延迟 + 下载)" },
+  { value: "ALL", label: "完整(延迟+下载)" },
   { value: "TCP_PING", label: "仅延迟" },
 ];
 
 const SORT_METHODS = [
-  { value: "REVERSE_SPEED", label: "速度由高到低" },
-  { value: "SPEED", label: "速度由低到高" },
-  { value: "REVERSE_PING", label: "延迟由高到低" },
-  { value: "PING", label: "延迟由低到高" },
+  { value: "REVERSE_SPEED", label: "速度↓" },
+  { value: "SPEED", label: "速度↑" },
+  { value: "REVERSE_PING", label: "延迟↓" },
+  { value: "PING", label: "延迟↑" },
   { value: "ORIGINAL", label: "原始顺序" },
 ];
 
@@ -107,9 +107,7 @@ export default function ControlBar() {
               {canResume && (
                 <Button
                   variant="secondary"
-                  onClick={() =>
-                    resumeTest(testMode, sortMethod, "", colors)
-                  }
+                  onClick={() => resumeTest(testMode, sortMethod, colors)}
                   className="min-w-[6rem] justify-center"
                   title="跳过已测节点,继续测试剩下的"
                 >
@@ -120,7 +118,7 @@ export default function ControlBar() {
               <Button
                 variant="primary"
                 disabled={selected.size === 0}
-                onClick={() => startTest(testMode, sortMethod, "", colors)}
+                onClick={() => startTest(testMode, sortMethod, colors)}
                 className="min-w-[6.5rem] justify-center"
               >
                 <Play size={14} />

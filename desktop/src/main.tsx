@@ -7,12 +7,15 @@ import "./index.css";
 // 禁用 webview 默认右键菜单(刷新/查看源码等开发者菜单对最终用户无用)
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 
-// React 挂载完成后移除启动 splash(index.html 里那个紫色加载页)
-function dismissSplash() {
-  const el = document.getElementById("ss-splash");
-  if (!el) return;
-  el.classList.add("hide");
-  setTimeout(() => el.remove(), 250);
+// Tauri 窗口启动时设了 visible:false(避免白屏闪烁),React 第一帧画完后再让窗口显示。
+// 浏览器环境(纯 web 调试)下 invoke 不存在,catch 静默忽略即可。
+async function showMainWindow() {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("show_main_window");
+  } catch {
+    /* 非 Tauri 环境 */
+  }
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
@@ -23,6 +26,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 
-// 等下一帧确保 React 实际渲染了一次再隐藏 splash,
-// 否则 splash 消失瞬间空白会闪一下
-requestAnimationFrame(() => requestAnimationFrame(dismissSplash));
+// 等两帧再 show:第一帧 React 提交 DOM,第二帧浏览器完成布局/绘制,
+// 窗口出现的瞬间用户看到的就是已渲染好的主界面,不会再有任何闪烁。
+requestAnimationFrame(() =>
+  requestAnimationFrame(() => {
+    showMainWindow();
+  }),
+);

@@ -188,6 +188,10 @@ std::string buildSocks5ProxyString(const std::string &addr, int port, const std:
 // return the mean of the successful measured probes (ms), or -1.0 if all fail.
 // Per-probe ms (0 = failed) go into raw[0..probes-1] when non-null. When
 // `progress_label` is non-empty we draw a live progress bar to stderr.
+//
+// 超时给 20s(原来的 10s 太紧):Hysteria2 / TUIC 等 QUIC 协议首次握手包要走完整
+// 1-RTT 链路,加上代理转发,在弱网下 10s 内 warmup+probe 几乎一定会超时,
+// 表现就是测速能跑(单个长连接已建立),但延迟列全 N/A。
 double measureLatency(const std::string &url, const std::string &proxy,
                       int probes, int *raw, const std::string &progress_label)
 {
@@ -203,8 +207,8 @@ double measureLatency(const std::string &url, const std::string &proxy,
     curl_easy_setopt(h, CURLOPT_MAXREDIRS, 5L);
     curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);
-    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(h, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 20L);
+    curl_easy_setopt(h, CURLOPT_TIMEOUT, 20L);
     curl_easy_setopt(h, CURLOPT_USERAGENT, user_agent_str.data());
     curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, dummy_writer);
     curl_easy_setopt(h, CURLOPT_FORBID_REUSE, 0L); // allow keep-alive reuse
@@ -214,7 +218,11 @@ double measureLatency(const std::string &url, const std::string &proxy,
         std::cerr << progress_label << " ";
 
     // Warm-up: pays the TCP + TLS handshake once; result discarded.
-    curl_easy_perform(h);
+    // 失败也不要紧,后续 probe 会重新拨号。
+    CURLcode warm = curl_easy_perform(h);
+    if(warm != CURLE_OK)
+        writeLog(LOG_TYPE_WARN, std::string("Latency warmup failed (")
+                 + curl_easy_strerror(warm) + ") url=" + url + " proxy=" + proxy);
 
     double total = 0.0;
     int ok = 0;
@@ -232,6 +240,13 @@ double measureLatency(const std::string &url, const std::string &proxy,
             if(raw) raw[i] = ms;
             total += ms;
             ok++;
+        }
+        else
+        {
+            // 把 libcurl 错误码记下来,便于排查"为什么 hy2 / reality 节点延迟全 N/A"。
+            writeLog(LOG_TYPE_WARN, std::string("Latency probe ") + std::to_string(i + 1)
+                     + "/" + std::to_string(probes) + " failed: " + curl_easy_strerror(res)
+                     + " url=" + url);
         }
         if(show)
             std::cerr << (res == CURLE_OK ? "[" + std::to_string(ms) + "ms]"

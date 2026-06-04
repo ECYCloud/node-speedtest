@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <numeric>
+#include <thread>
 
 #ifdef _WIN32
 #include <conio.h>
@@ -29,6 +30,7 @@
 #include "ini_reader.h"
 #include "multithread_test.h"
 #include "nodeinfo.h"
+#include "rapidjson_extra.h"
 
 using namespace std::chrono;
 
@@ -280,6 +282,37 @@ bool mihomoSwitchProxy(const std::string &name)
     return false;
 }
 
+// 走 mihomo Clash API 的 /proxies/<name>/delay 测延迟。
+//
+// 为什么不用 libcurl 直接通过 socks5 探测?
+//   * libcurl 短连接 + socks5 + mihomo 中转 + hy2/QUIC 拨号四层链路,
+//     hy2 等 QUIC 协议首包慢,经常 10-20s 内拿不到 200 响应,
+//     表现就是 hy2 节点测速能跑(长连接已建立),但延迟列全 N/A。
+//   * mihomo 内置的 /delay 由内核直接拨节点,对所有协议(含 QUIC)
+//     都有稳定的延迟数值,这是 Clash Verge / Karing 等 GUI 也在用的接口。
+//
+// 返回:成功时把延迟 ms 写入 *out_ms 并返回 true;失败 false。
+// 端点形如 http://127.0.0.1:9990/proxies/<urlencoded-name>/delay?url=...&timeout=5000
+static bool mihomoMeasureDelay(const std::string &proxy_name, int *out_ms,
+                               const std::string &url = "https://cp.cloudflare.com/generate_204",
+                               int timeout_ms = 5000)
+{
+    std::string ep = "http://127.0.0.1:9990/proxies/" + UrlEncode(proxy_name) +
+                     "/delay?timeout=" + std::to_string(timeout_ms) +
+                     "&url=" + UrlEncode(url);
+    std::string body = webGet(ep, "", 0);
+    if(body.empty()) return false;
+    // 响应形如 {"delay": 123} 或 {"message":"An error occurred ..."}
+    rapidjson::Document j;
+    j.Parse(body.data());
+    if(j.HasParseError()) return false;
+    if(!j.HasMember("delay") || !j["delay"].IsNumber()) return false;
+    int v = static_cast<int>(j["delay"].GetDouble());
+    if(v <= 0) return false;
+    if(out_ms) *out_ms = v;
+    return true;
+}
+
 int killClient(int client)
 {
     (void)client;
@@ -469,6 +502,103 @@ void readConf(std::string path)
 
 extern std::vector<nodeInfo> allNodes;
 void saveResult(std::vector<nodeInfo> &nodes);
+
+// renderer.cpp 里定义的全局,batchTest 开始时填充它们供 PNG footer 使用
+extern std::string g_local_country, g_local_region, g_local_city, g_local_isp;
+extern std::string g_test_start_time, g_test_tz_label;
+
+// ip-api.com 返回的 ISP 字段是英文(China Telecom backbone / Chinanet 等),
+// 这里做关键词→中文映射,避免在结果图脚部和前端展示一长串英文。
+// 没匹配的保留原文(便于排查),不破坏可读性。
+static std::string translateIsp(const std::string &raw)
+{
+    if(raw.empty()) return raw;
+    std::string lower = toLower(raw);
+    struct Rule { const char *kw; const char *zh; };
+    // 顺序敏感:更长更精确的关键词先匹配
+    static const Rule rules[] = {
+        {"chinanet",          "中国电信"},
+        {"china telecom",     "中国电信"},
+        {"chinaunicom",       "中国联通"},
+        {"china unicom",      "中国联通"},
+        {"china169",          "中国联通"},
+        {"unicom",            "中国联通"},
+        {"chinamobile",       "中国移动"},
+        {"china mobile",      "中国移动"},
+        {"cmcc",              "中国移动"},
+        {"china broadcast",   "中国广电"},
+        {"chinabroadnet",     "中国广电"},
+        {"cbn",               "中国广电"},
+        {"great wall broadband", "长城宽带"},
+        {"great wall",        "长城宽带"},
+        {"dr.peng",           "鹏博士"},
+        {"dr peng",           "鹏博士"},
+        {"cernet",            "教育网"},
+        {"education network", "教育网"},
+        {"cstnet",            "中国科技网"},
+        {"cnix",              "中国国际通信网"},
+        {"cloudflare",        "Cloudflare"},
+        {"amazon",            "Amazon AWS"},
+        {"google",            "Google"},
+        {"microsoft",         "Microsoft Azure"},
+        {"akamai",            "Akamai"},
+        {"hurricane electric","Hurricane Electric"},
+    };
+    for(const auto &r : rules)
+    {
+        if(lower.find(r.kw) != std::string::npos)
+            return r.zh;
+    }
+    return raw;
+}
+
+// 异步查询本机出口公网 IP 的国家/省/市/运营商,直接调 ip-api.com 中文接口,
+// 与 desktop/src-tauri 保持一致,所有字段中文化。失败时静默返回(footer 自然
+// 跳过对应行)。仅供 PNG footer 展示,不影响测试主流程。
+static void fetchLocalGeoAsync()
+{
+    std::thread([](){
+        std::string body = webGet(
+            "http://ip-api.com/json/?lang=zh-CN&fields=country,regionName,city,isp,status",
+            "", 0);
+        if(body.empty()) return;
+        rapidjson::Document j;
+        j.Parse(body.data());
+        if(j.HasParseError()) return;
+        if(GetMember(j, "status") != "success") return;
+        g_local_country = GetMember(j, "country");
+        g_local_region  = GetMember(j, "regionName");
+        g_local_city    = GetMember(j, "city");
+        g_local_isp     = translateIsp(GetMember(j, "isp"));
+    }).detach();
+}
+
+// 形如 "(UTC+08:00)" 的时区标签,取自当前 tm 的 tm_gmtoff(Windows 用 _timezone)。
+// strftime("%Z") 在 Windows 上会返回本地化全名("中国标准时间"),长度不可控且
+// 容易撑破 footer,所以这里手工拼接。
+static std::string buildTzLabel()
+{
+    long offset_sec = 0;
+#ifdef _WIN32
+    _tzset();
+    offset_sec = -_timezone; // _timezone = UTC - local
+    time_t now = time(NULL);
+    struct tm *lt = localtime(&now);
+    if(lt && lt->tm_isdst > 0) offset_sec += 3600;
+#else
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    offset_sec = lt.tm_gmtoff;
+#endif
+    char sign = offset_sec >= 0 ? '+' : '-';
+    long abs_sec = offset_sec >= 0 ? offset_sec : -offset_sec;
+    int hh = static_cast<int>(abs_sec / 3600);
+    int mm = static_cast<int>((abs_sec % 3600) / 60);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "(UTC%c%02d:%02d)", sign, hh, mm);
+    return std::string(buf);
+}
 
 // Returns true if any node in `nodes` has actual test data we'd want to save.
 static bool hasAnyTestData(const std::vector<nodeInfo> &nodes)
@@ -676,8 +806,10 @@ int singleTest(nodeInfo &node)
             writeLog(LOG_TYPE_INFO, "Switching mihomo outbound to '" + node.proxyStr + "'...");
             if(!mihomoSwitchProxy(node.proxyStr))
                 writeLog(LOG_TYPE_WARN, "Proxy switch failed; the test will probably show no speed.");
-            // give mihomo a brief moment to tear down the old chain and dial the new one
-            sleep(200);
+            // mihomo 切完 outbound 之后,QUIC 类协议(hy2/anytls/tuic)需要更长
+            // 时间完成新链路握手 — TCP 协议 200ms 够,UDP 类至少 800ms 才稳。
+            // 给所有协议统一 800ms 是最简单且不会拖慢太多的方案。
+            sleep(800);
         }
     }
     // Plan B: kernel is shared across the whole run, so per-test kill is gone.
@@ -699,36 +831,70 @@ int singleTest(nodeInfo &node)
     }
 
     printMsg(SPEEDTEST_MESSAGE_STARTPING, rpcmode, id);
-    // Latency model (rebuilt): we no longer use a raw TCP SYN ping nor a
-    // plaintext "Google ping". Both latency columns are now REAL proxied
-    // requests measured with libcurl's CURLINFO_TOTAL_TIME:
-    //   * HTTP延迟  -> http  request through the SOCKS5 proxy (no TLS)
-    //   * HTTPS延迟 -> https request through the SOCKS5 proxy (incl. TLS)
-    // This works uniformly for TCP- and UDP-based protocols (Hysteria2 etc.),
-    // since everything goes through the local SOCKS5 port.
-    const std::string http_probe_url  = "http://cp.cloudflare.com/generate_204";
+    // Latency model: 只保留 HTTPS 延迟一项(2025-10 改动)。
+    // 走内核的协议(VLESS/Trojan/Hysteria2/AnyTLS/SS/SSR/VMess)统一用 mihomo
+    // 内置的 /proxies/<name>/delay 接口测延迟 — 内核内部直接拨节点,绕开
+    // libcurl→socks5→mihomo→QUIC 的多层链路,对 hy2/anytls 等 QUIC 协议同样稳定。
+    // 之前用 libcurl 经 socks5 探测时,hy2 节点经常因 QUIC 首包慢导致全 N/A。
+    // SOCKS5 / HTTP 节点不经内核,只能继续用 libcurl 通过代理探测。
     const std::string https_probe_url = "https://cp.cloudflare.com/generate_204";
 
     if(speedtest_mode != "speedonly")
     {
-        writeLog(LOG_TYPE_INFO, "Now measuring HTTP latency through proxy...");
-        double httpms = measureLatency(http_probe_url, proxy, 3, node.rawPing,
-                                       rpcmode ? "" : "HTTP延迟");
-        if(httpms < 0.0)
+        bool via_kernel = node.linkType != SPEEDTEST_MESSAGE_FOUNDSOCKS &&
+                          node.linkType != SPEEDTEST_MESSAGE_FOUNDHTTP &&
+                          !node.proxyStr.empty();
+        double latency_ms = -1.0;
+        int rawms[10] = {};
+
+        if(via_kernel)
+        {
+            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API...");
+            // 跑 3 次取平均,与原 libcurl 路径行为一致;失败的轮次填 0,
+            // PNG sparkline / 折线还能用 raw 数组反映稳定性。
+            int ok = 0;
+            int sum = 0;
+            for(int i = 0; i < 3; ++i)
+            {
+                int ms = 0;
+                if(mihomoMeasureDelay(node.proxyStr, &ms, https_probe_url, 5000))
+                {
+                    rawms[i] = ms;
+                    sum += ms;
+                    ok++;
+                }
+                else
+                {
+                    writeLog(LOG_TYPE_WARN, "mihomo /delay probe " + std::to_string(i + 1) + " failed for '" + node.proxyStr + "'");
+                }
+            }
+            if(ok > 0) latency_ms = static_cast<double>(sum) / ok;
+        }
+        else
+        {
+            writeLog(LOG_TYPE_INFO, "Measuring latency via libcurl through proxy...");
+            latency_ms = measureLatency(https_probe_url, proxy, 3, rawms,
+                                        rpcmode ? "" : "延迟");
+        }
+
+        std::move(std::begin(rawms), std::end(rawms), node.rawSitePing);
+        for(int i = 0; i < 6 && i < 10; ++i) node.rawPing[i] = rawms[i];
+        if(latency_ms < 0.0)
         {
             node.avgPing = "0.00";
-            writeLog(LOG_TYPE_INFO, "HTTP latency: all probes failed.");
+            node.sitePing = "0.00";
+            writeLog(LOG_TYPE_INFO, "Latency: all probes failed.");
         }
         else
         {
             char t[16] = {};
-            snprintf(t, sizeof(t), "%0.2f", httpms);
+            snprintf(t, sizeof(t), "%0.2f", latency_ms);
             node.avgPing.assign(t);
-            writeLog(LOG_TYPE_INFO, "HTTP latency: " + node.avgPing + " ms");
+            node.sitePing.assign(t);
+            writeLog(LOG_TYPE_INFO, "Latency: " + node.sitePing + " ms");
         }
-        // Connectivity is now decided by the download attempt, not by ping,
-        // so a failed latency probe is not a hard error here.
-        node.pkLoss = httpms < 0.0 ? "100.00%" : "0.00%";
+        // 连通性以下载是否成功为准,延迟探测失败不算硬错误
+        node.pkLoss = latency_ms < 0.0 ? "100.00%" : "0.00%";
     }
     else
     {
@@ -751,28 +917,9 @@ int singleTest(nodeInfo &node)
             printMsg(SPEEDTEST_MESSAGE_GOTNAT, rpcmode, id, node.natType.get());
     }
 
+    // sitePing 与 avgPing 已同源,这里只补一次 GotGPing 消息,前端 webgui 仍能拿到
     if(test_site_ping)
-    {
-        printMsg(SPEEDTEST_MESSAGE_STARTGPING, rpcmode, id);
-        writeLog(LOG_TYPE_INFO, "Now measuring HTTPS latency through proxy...");
-        int rawhttps[10] = {};
-        double httpsms = measureLatency(https_probe_url, proxy, 3, rawhttps,
-                                        rpcmode ? "" : "HTTPS延迟");
-        std::move(std::begin(rawhttps), std::end(rawhttps), node.rawSitePing);
-        if(httpsms < 0.0)
-        {
-            node.sitePing = "0.00";
-            writeLog(LOG_TYPE_INFO, "HTTPS latency: all probes failed.");
-        }
-        else
-        {
-            char t[16] = {};
-            snprintf(t, sizeof(t), "%0.2f", httpsms);
-            node.sitePing.assign(t);
-            writeLog(LOG_TYPE_INFO, "HTTPS latency: " + node.sitePing + " ms");
-        }
         printMsg(SPEEDTEST_MESSAGE_GOTGPING, rpcmode, id, node.sitePing);
-    }
 
     printMsg(SPEEDTEST_MESSAGE_STARTSPEED, rpcmode, id);
     //node.total_recv_bytes = 1;
@@ -827,7 +974,17 @@ void batchTest(std::vector<nodeInfo> &nodes)
     }
     else
     {
-        resultInit();
+        // 一开测就记录时间与时区,renderer footer 用它代替"生成时间"。
+        // custom_group 为空时使用第一个节点的 group(通常是协议默认 group)。
+        g_test_start_time = getTime(3);
+        g_test_tz_label = buildTzLabel();
+        std::string log_group = custom_group;
+        if(log_group.empty() && !nodes.empty())
+            log_group = nodes.front().group;
+        resultInit(log_group);
+        // 异步查询本机出口位置 + 运营商,不阻塞测试主流程
+        fetchLocalGeoAsync();
+
         writeLog(LOG_TYPE_INFO, "Speedtest will now begin.");
         printMsg(SPEEDTEST_MESSAGE_BEGIN, rpcmode);
         //first print out all nodes when in Web mode
@@ -1220,7 +1377,11 @@ int main(int argc, char* argv[])
         // initialize the result log path ourselves before testing — otherwise
         // the signal handler (Ctrl+C) and the post-test save below would have
         // nowhere to write.
-        resultInit();
+        g_test_start_time = getTime(3);
+        g_test_tz_label = buildTzLabel();
+        std::string log_group = custom_group.empty() ? allNodes.front().group : custom_group;
+        resultInit(log_group);
+        fetchLocalGeoAsync();
         writeLog(LOG_TYPE_INFO, "Speedtest will now begin.");
         printMsg(SPEEDTEST_MESSAGE_BEGIN, rpcmode);
         singleTest(allNodes[0]);

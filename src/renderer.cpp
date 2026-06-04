@@ -25,6 +25,15 @@ std::string mihomo_kernel_version = MIHOMO_FALLBACK_VERSION;
 // Externally configured via the [export] image_scale ini key in pref.ini.
 int image_scale = 2;
 
+// 测试机出口 IP 信息 / 测试时间 — 在 batchTest 开始时由 main.cpp 填充。
+// 留空时 footer 自动跳过对应行/字段。
+std::string g_local_country;
+std::string g_local_region;
+std::string g_local_city;
+std::string g_local_isp;
+std::string g_test_start_time;
+std::string g_test_tz_label;
+
 std::vector<color> colorgroup;
 std::vector<int> bounds;
 

@@ -1,7 +1,8 @@
-name: Verify build (Linux)
-# Minimal compile-check workflow: confirms the C++ source still compiles after
-# the mihomo-kernel refactor. Skips third-party kernel binaries and the legacy
-# from-source dependency build (those are unrelated to our code change).
+name: Verify build
+# Minimal compile-check workflow: confirms the C++ source still compiles on
+# Linux, Windows and macOS after the mihomo-kernel refactor. Skips third-party
+# kernel binaries and the legacy from-source dependency build (those are
+# unrelated to our code change).
 
 on:
   push:
@@ -22,7 +23,7 @@ jobs:
             build-essential cmake pkg-config \
             libcurl4-openssl-dev libssl-dev libyaml-cpp-dev \
             libevent-dev libpcre2-dev rapidjson-dev \
-            libpng-dev libfreetype-dev zlib1g-dev libbz2-dev
+            libpng-dev libfreetype-dev libharfbuzz-dev zlib1g-dev libbz2-dev
 
       - name: Build PNGwriter (header-only-ish, not in apt)
         run: |
@@ -84,6 +85,7 @@ jobs:
             mingw-w64-x86_64-rapidjson
             mingw-w64-x86_64-libpng
             mingw-w64-x86_64-freetype
+            mingw-w64-x86_64-harfbuzz
             mingw-w64-x86_64-zlib
             mingw-w64-x86_64-bzip2
 
@@ -126,5 +128,58 @@ jobs:
         with:
           name: stairspeedtest-windows-amd64
           path: stage/
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos_arm64_compile:
+    name: macOS / arm64 / Homebrew clang
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps (Homebrew)
+        run: |
+          brew update
+          brew install cmake pkgconf \
+            curl openssl@3 yaml-cpp \
+            libevent pcre2 rapidjson \
+            libpng freetype harfbuzz zlib bzip2
+
+      - name: Build PNGwriter from source (not in Homebrew)
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_FIND_FRAMEWORK=NEVER \
+                -DCMAKE_INSTALL_PREFIX="$BREW_PREFIX" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j$(sysctl -n hw.ncpu)
+          cmake --install /tmp/pngwriter/build
+
+      - name: Configure
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          # openssl@3 and curl are keg-only on macOS; point CMake/pkg-config at them.
+          export PKG_CONFIG_PATH="$BREW_PREFIX/opt/curl/lib/pkgconfig:$BREW_PREFIX/opt/openssl@3/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_PREFIX_PATH="$BREW_PREFIX/opt/curl;$BREW_PREFIX" \
+                -DOPENSSL_ROOT_DIR="$BREW_PREFIX/opt/openssl@3"
+
+      - name: Compile
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Inspect artifact
+        run: |
+          ls -la build/
+          file build/stairspeedtest || true
+
+      - name: Upload binary
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stairspeedtest-macos-arm64
+          path: build/stairspeedtest
           if-no-files-found: warn
           retention-days: 7

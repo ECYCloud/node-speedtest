@@ -11,7 +11,7 @@ export function fmtSpeed(bps: number): string {
   return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[u]}`;
 }
 
-/** 秒为单位的延迟,后端接口里 ping 值字段已是秒 */
+/** 秒为单位的延迟，后端接口里 ping 值字段已是秒 */
 export function fmtPingSeconds(s: number): string {
   if (!s || s <= 0) return "—";
   return `${(s * 1000).toFixed(0)} ms`;

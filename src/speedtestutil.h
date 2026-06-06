@@ -16,6 +16,12 @@ std::string snellConstruct(const std::string &group, const std::string &remarks,
 std::string vlessConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &uuid, const std::string &flow, const std::string &encryption, const std::string &network, const std::string &security, const std::string &sni, const std::string &path, const std::string &host, const std::string &ech_server_name, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool(), const std::string &reality_pbk = "", const std::string &reality_sid = "", const std::string &client_fingerprint = "");
 std::string hysteria2Construct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &ports, const std::string &password, const std::string &sni, const std::string &obfs, const std::string &obfsPassword, const std::string &up, const std::string &down, const std::string &ech_server_name, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool(), const std::string &hop_interval = "");
 std::string anytlsConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &password, const std::string &sni, const std::string &ech_server_name, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool());
+std::string tuicConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &uuid, const std::string &password, const std::string &token, const std::string &sni, const std::string &alpn, const std::string &congestion, const std::string &udp_relay_mode, bool reduce_rtt, const std::string &ech_server_name, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool());
+std::string hysteriaConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &ports, const std::string &auth, const std::string &sni, const std::string &up, const std::string &down, const std::string &obfs, const std::string &alpn, const std::string &protocol, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool());
+std::string wireguardConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &private_key, const std::string &public_key, const std::string &ip, const std::string &ipv6, const std::string &preshared_key, const std::string &reserved, tribool udp = tribool());
+std::string sshConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &username, const std::string &password, const std::string &private_key);
+std::string mieruConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &port_range, const std::string &username, const std::string &password, const std::string &transport, tribool udp = tribool());
+std::string shadowtlsConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &password, const std::string &method, const std::string &stls_password, const std::string &stls_host, const std::string &version, tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool());
 
 // Plan B: pack every node into one mihomo config (one selector group GLOBAL).
 // Each node.proxyStr is rewritten to its assigned in-config name string
@@ -31,8 +37,11 @@ void explodeShadowrocket(std::string kit, const std::string &custom_port, nodeIn
 void explodeKitsunebi(std::string kit, const std::string &custom_port, nodeInfo &node);
 /// Parse a link
 void explode(const std::string &link, bool sslibev, bool ssrlibev, const std::string &custom_port, nodeInfo &node);
+void explodeTUIC(const std::string &link, const std::string &custom_port, nodeInfo &node);
 void explodeSSD(std::string link, bool libev, const std::string &custom_port, std::vector<nodeInfo> &nodes);
 void explodeSub(std::string sub, bool sslibev, bool ssrlibev, const std::string &custom_port, std::vector<nodeInfo> &nodes);
+/// Parse a sing-box JSON config (outbounds array). Returns number of nodes added.
+int explodeSingbox(const std::string &content, const std::string &custom_port, std::vector<nodeInfo> &nodes);
 int explodeConf(std::string filepath, const std::string &custom_port, bool sslibev, bool ssrlibev, std::vector<nodeInfo> &nodes);
 int explodeConfContent(const std::string &content, const std::string &custom_port, bool sslibev, bool ssrlibev, std::vector<nodeInfo> &nodes);
 bool chkIgnore(const nodeInfo &node, string_array &exclude_remarks, string_array &include_remarks);

@@ -22,10 +22,8 @@ std::atomic<time_t> done_time = 0;
 //variables from main
 extern std::vector<nodeInfo> allNodes;
 extern int cur_node_id, socksport;
-extern std::string speedtest_mode, export_sort_method, export_color_style, custom_group, override_conf_port;
+extern std::string speedtest_mode, export_sort_method, custom_group, override_conf_port;
 extern bool ssr_libev, ss_libev;
-extern std::vector<color> custom_color_groups;
-extern std::vector<int> custom_color_bounds;
 extern string_array custom_exclude_remarks, custom_include_remarks;
 extern unsigned int node_count;
 
@@ -36,9 +34,8 @@ void batchTest(std::vector<nodeInfo> &nodes);
 bool launchMihomoForNodes(std::vector<nodeInfo> &nodes);
 
 //webui variables
-std::vector<nodeInfo> targetNodes, testedNodes;
+std::vector<nodeInfo> targetNodes;
 std::string server_status = "stopped";
-nodeInfo current_node;
 
 nodeInfo find_node(std::string &group, std::string &remarks, std::string &server, int &server_port)
 {
@@ -55,7 +52,14 @@ void ssrspeed_regenerate_node_list(rapidjson::Document &json)
     int server_port;
 
     eraseElements(targetNodes);
-    eraseElements(testedNodes);
+
+    // 防御:请求体缺 configs 或类型不对时直接返回,避免 json["configs"] 访问
+    // 不存在的成员触发 rapidjson RAPIDJSON_ASSERT(本项目重定义为抛异常 → 崩溃)。
+    if(!json.IsObject() || !json.HasMember("configs") || !json["configs"].IsArray())
+    {
+        node_count = 0;
+        return;
+    }
 
     for(unsigned int i = 0; i < json["configs"].Size(); i++)
     {
@@ -83,16 +87,24 @@ void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInf
 {
     geoIPInfo inbound = node.inboundGeoIP.get(), outbound = node.outboundGeoIP.get();
     int counter = 0, total = 0;
+    // 安全转换:节点处于测试中间态时这些字段可能为空/非数字,裸 stod 会抛
+    // invalid_argument 异常 —— /getresults 在 web 线程里调用,异常会让该线程崩溃。
+    // 用带默认值的解析兜住,异常值一律按 0 处理。
+    auto safeD = [](const std::string &s) -> double {
+        try { return s.empty() ? 0.0 : std::stod(s); }
+        catch(...) { return 0.0; }
+    };
+    double lossPct = node.pkLoss.size() > 1 ? safeD(node.pkLoss.substr(0, node.pkLoss.size() - 1)) : 0.0;
     writer.Key("group");
     writer.String(node.group.data());
     writer.Key("remarks");
     writer.String(node.remarks.data());
     writer.Key("loss");
-    writer.Double(stod(node.pkLoss.substr(0, node.pkLoss.size() - 1)) / 100.0);
+    writer.Double(lossPct / 100.0);
     writer.Key("ping");
-    writer.Double(stod(node.avgPing) / 1000.0);
+    writer.Double(safeD(node.avgPing) / 1000.0);
     writer.Key("gPing");
-    writer.Double(stod(node.sitePing) / 1000.0);
+    writer.Double(safeD(node.sitePing) / 1000.0);
     writer.Key("rawSocketSpeed");
     writer.StartArray();
     for(auto &y : node.rawSpeed)
@@ -145,7 +157,7 @@ void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInf
     writer.EndObject();
     writer.Key("dspeed");
     writer.Double(ssrspeed_get_speed_number(node.avgSpeed));
-    // 最高瞬时速度,与 dspeed 同形,前端结果表展示"最高速度"列。
+    // 最高瞬时速度，与 dspeed 同形，前端结果表展示"最高速度"列。
     writer.Key("dspeedMax");
     writer.Double(ssrspeed_get_speed_number(node.maxSpeed));
     writer.Key("trafficUsed");
@@ -156,43 +168,46 @@ std::string ssrspeed_generate_results(std::vector<nodeInfo> &nodes)
 {
     rapidjson::StringBuffer sb;
     rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
-    nodeInfo *node = nullptr;
+    bool running = start_flag;
 
     writer.StartObject();
     writer.Key("status");
-    writer.String(start_flag ? "running" : "stopped");
+    writer.String(running ? "running" : "stopped");
+
+    // current:正在测试的节点(仅运行中且 cur_node_id 命中)。其 avgSpeed/maxSpeed
+    // 在 perform_test 下载循环内实时更新，前端据此显示实时速度。
     writer.Key("current");
     writer.StartObject();
-    for(nodeInfo &x : nodes)
+    if(running)
     {
-        if(x.id == cur_node_id)
+        for(nodeInfo &x : nodes)
         {
-            node = &x;
+            if(x.id == cur_node_id && x.linkType != -1)
+            {
+                json_write_node(writer, x);
+                break;
+            }
         }
-        if(x.id == current_node.id)
-        {
-            current_node = x;
-        }
-    }
-    if(node && node->linkType != -1)
-        json_write_node(writer, *node);
-    if(node && (current_node.groupID != node->groupID || current_node.id != node->id))
-    {
-        if(current_node.linkType != -1)
-        {
-            testedNodes.push_back(current_node);
-        }
-        current_node = *node;
     }
     writer.EndObject();
 
+    // results:已测完的节点 —— 直接按节点真实状态判定，不再依赖前端轮询的副作用
+    // 累积已测列表(旧逻辑会漏掉最后一个节点、且测速快于轮询间隔时整段丢失)。
+    // 测试进行中:id < cur_node_id 即已测完(节点按 id 顺序串行测试);
+    // 测试结束(start_flag=false):全部节点都已完成。
     writer.Key("results");
     writer.StartArray();
-    for(nodeInfo &x : testedNodes)
+    for(nodeInfo &x : nodes)
     {
-        writer.StartObject();
-        json_write_node(writer, x);
-        writer.EndObject();
+        if(x.linkType == -1)
+            continue;
+        bool done = running ? (x.id < cur_node_id) : true;
+        if(done)
+        {
+            writer.StartObject();
+            json_write_node(writer, x);
+            writer.EndObject();
+        }
     }
     writer.EndArray();
     writer.EndObject();
@@ -240,6 +255,24 @@ std::string ssrspeed_generate_web_configs(std::vector<nodeInfo> &nodes)
         case SPEEDTEST_MESSAGE_FOUNDANYTLS:
             writer.String("AnyTLS");
             break;
+        case SPEEDTEST_MESSAGE_FOUNDTUIC:
+            writer.String("TUIC");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDHYSTERIA:
+            writer.String("Hysteria");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDWIREGUARD:
+            writer.String("WireGuard");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDSSH:
+            writer.String("SSH");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDMIERU:
+            writer.String("Mieru");
+            break;
+        case SPEEDTEST_MESSAGE_FOUNDSHADOWTLS:
+            writer.String("ShadowTLS");
+            break;
         default:
             writer.String("Unknown");
             writer.EndObject();
@@ -255,39 +288,6 @@ std::string ssrspeed_generate_web_configs(std::vector<nodeInfo> &nodes)
         writer.Int(x.port);
         writer.Key("server");
         writer.String(x.server.data());
-        writer.EndObject();
-        writer.EndObject();
-    }
-    writer.EndArray();
-    return sb.GetString();
-}
-
-std::string ssrspeed_generate_color()
-{
-    rapidjson::StringBuffer sb;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
-    writer.StartArray();
-    writer.StartObject();
-    writer.Key("name");
-    writer.String("original");
-    writer.Key("colors");
-    writer.StartObject();
-    writer.EndObject();
-    writer.EndObject();
-    writer.StartObject();
-    writer.Key("name");
-    writer.String("rainbow");
-    writer.Key("colors");
-    writer.StartObject();
-    writer.EndObject();
-    writer.EndObject();
-    if(custom_color_bounds.size() && custom_color_groups.size())
-    {
-        writer.StartObject();
-        writer.Key("name");
-        writer.String("custom");
-        writer.Key("colors");
-        writer.StartObject();
         writer.EndObject();
         writer.EndObject();
     }
@@ -323,11 +323,6 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         return "{\"main\":\"" VERSION "\",\"webapi\":\"0.6.1\"}";
     });
 
-    append_response("GET", "/getcolors", "text/plain", [](RESPONSE_CALLBACK_ARGS) -> std::string
-    {
-        return ssrspeed_generate_color();
-    });
-
     append_response("POST", "/readsubscriptions", "text/plain;charset=utf-8", [](RESPONSE_CALLBACK_ARGS) -> std::string
     {
         if(start_flag)
@@ -340,10 +335,14 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         addNodes(suburl, false);
         rewriteNodeID(allNodes);
         // 关键修复:webserver 模式过去漏了这一步 ——
-        // 把所有节点打包到 config.yaml 启动一次 mihomo,并把每个 node.proxyStr
+        // 把所有节点打包到 config.yaml 启动一次 mihomo，并把每个 node.proxyStr
         // 重写为 "node-N"。否则后续 batchTest 会把整个 yaml 当节点名传给
-        // mihomoSwitchProxy,导致 outbound 切不到节点,全部 socks5 connect not accepted。
+        // mihomoSwitchProxy，导致 outbound 切不到节点，全部 socks5 connect not accepted。
         launchMihomoForNodes(allNodes);
+        // 读取新订阅即一次全新会话:清空上一次的测试结果状态，否则前端轮询 /getresults
+        // 会把旧结果拉回来 —— 表现为"测试结果不重置""开始测速按钮闪回重新测速"。
+        eraseElements(targetNodes);
+        cur_node_id = -1;
         return ssrspeed_generate_web_configs(allNodes);
     });
 
@@ -361,6 +360,9 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
             {
                 rewriteNodeID(allNodes);
                 launchMihomoForNodes(allNodes); // 见 /readsubscriptions 注释
+                // 同 /readsubscriptions:清空上一次测试结果，保证全新会话
+                eraseElements(targetNodes);
+                cur_node_id = -1;
                 return ssrspeed_generate_web_configs(allNodes);
             }
         }
@@ -376,22 +378,37 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         std::thread t([=]()
         {
             start_flag = true;
-            rapidjson::Document json;
-            json.Parse(request.postdata.data());
-            std::string test_mode = GetMember(json, "testMode"), sort_method = GetMember(json, "sortMethod"), group = GetMember(json, "group"), exp_color = GetMember(json, "colors");
+            // 顶层兜底:测速链路里任何一步抛异常(尤其 rapidjson 的 RAPIDJSON_ASSERT
+            // 被重定义为 throw runtime_error —— GeoIP/内核返回非预期 JSON 时会触发),
+            // 若不捕获就会让这个 detached 线程 terminate 掉整个后端进程,表现为"无法测试"。
+            // 这里统一兜住:保证 start_flag 复位、后端存活,单个节点失败不影响整体。
+            try
+            {
+                rapidjson::Document json;
+                json.Parse(request.postdata.data());
+                std::string test_mode = GetMember(json, "testMode"), sort_method = GetMember(json, "sortMethod"), group = GetMember(json, "group");
 
-            if(test_mode == "ALL")
-                speedtest_mode = "all";
-            else if(test_mode == "TCP_PING")
-                speedtest_mode = "pingonly";
-            std::transform(sort_method.begin(), sort_method.end(), sort_method.begin(), ::tolower);
-            export_sort_method = replace_all_distinct(sort_method, "reverse_", "r");
-            custom_group = group;
-            if(exp_color.size())
-                export_color_style = exp_color;
+                if(test_mode == "ALL")
+                    speedtest_mode = "all";
+                else if(test_mode == "TCP_PING")
+                    speedtest_mode = "pingonly";
+                std::transform(sort_method.begin(), sort_method.end(), sort_method.begin(), ::tolower);
+                export_sort_method = replace_all_distinct(sort_method, "reverse_", "r");
+                custom_group = group;
 
-            ssrspeed_regenerate_node_list(json);
-            batchTest(targetNodes);
+                ssrspeed_regenerate_node_list(json);
+                batchTest(targetNodes);
+            }
+            catch(const std::exception &e)
+            {
+                writeLog(LOG_TYPE_ERROR, std::string("Speedtest thread caught exception: ") + e.what());
+                std::cerr << "测速过程出现异常已被捕获，后端继续运行：" << e.what() << std::endl;
+            }
+            catch(...)
+            {
+                writeLog(LOG_TYPE_ERROR, "Speedtest thread caught unknown exception.");
+                std::cerr << "测速过程出现未知异常已被捕获，后端继续运行。" << std::endl;
+            }
             done_time = time(NULL);
             start_flag = false;
         });

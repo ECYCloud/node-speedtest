@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   Image as ImageIcon,
   FileText,
@@ -86,20 +85,27 @@ export default function History() {
 
   async function exportActive() {
     if (!active) return;
-    const dir = await openDialog({
-      directory: true,
-      multiple: false,
-      title: "选择导出位置",
+    // 标准"另存为"对话框:用户选保存位置与文件名(默认用记录名 + .png)。
+    // 取所选路径的目录与基名，导出同名的 .png 与 .log 两个文件到该目录。
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const target = await save({
+      title: "导出测速结果",
+      defaultPath: `${active.name}.png`,
+      filters: [{ name: "测速结果", extensions: ["png"] }],
     });
-    if (!dir || typeof dir !== "string") return;
-    // 文件名已经在生成时带了"<分组名>-<时间戳>",这里不再追加 prefix,
-    // 否则会出现"分组名-分组名-时间戳"的重复前缀。
+    if (!target || typeof target !== "string") return;
+    // 拆出目录与基名(去扩展名)
+    const norm = target.replace(/\\/g, "/");
+    const slash = norm.lastIndexOf("/");
+    const dir = slash >= 0 ? target.slice(0, slash) : "";
+    let base = slash >= 0 ? norm.slice(slash + 1) : norm;
+    base = base.replace(/\.(png|log)$/i, "");
     setBusy(true);
     try {
       const files = await invoke<string[]>("export_history", {
         name: active.name,
         targetDir: dir,
-        prefix: "",
+        destName: base,
       });
       setTip(`已导出 ${files.length} 个文件到 ${dir}`);
     } catch (e) {
@@ -112,7 +118,7 @@ export default function History() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4 min-h-0 flex-1">
-      <Card className="p-4 flex flex-col min-h-0">
+      <Card className="p-5 flex flex-col min-h-0">
         <SectionTitle
           right={
             <div className="flex items-center gap-1.5">
@@ -141,7 +147,6 @@ export default function History() {
           }
           desc={`共 ${items.length} 条记录`}
         >
-          历史记录
         </SectionTitle>
         {confirmClear && (
           <div className="mb-2 p-3 rounded-lg bg-danger/10 border border-danger/30">
@@ -215,7 +220,7 @@ export default function History() {
                     }}
                     disabled={busy}
                     title="删除该条"
-                    className="ml-auto p-1 rounded hover:bg-danger/15 text-fg-muted hover:text-danger opacity-0 group-hover:opacity-100 transition"
+                    className="ml-auto p-1 rounded-full hover:bg-danger/15 text-fg-muted hover:text-danger opacity-0 group-hover:opacity-100 transition"
                   >
                     <Trash2 size={12} />
                   </button>

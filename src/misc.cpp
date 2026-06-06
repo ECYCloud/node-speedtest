@@ -48,6 +48,46 @@ typedef jpcre2::select<char> jp;
 #include <sys/socket.h>
 #endif // _WIN32
 
+// UTF-8 文件名安全的 fopen / rename。
+// Windows 的 std::fopen 把 char* 路径按系统 ACP(简中=GBK)解码，而本项目路径
+// 一律是 UTF-8 字节 —— 含中文的文件名会被二次编码成乱码。这里转成 UTF-16 走
+// _wfopen / _wrename(等价 MoveFileW)，保证中文文件名正确落盘。非 Windows 平台
+// 文件系统本就是 UTF-8 字节，直接透传。
+#ifdef _WIN32
+static std::wstring utf8ToWide(const std::string &s)
+{
+    if(s.empty()) return std::wstring();
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), NULL, 0);
+    if(n <= 0) return std::wstring();
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), &w[0], n);
+    return w;
+}
+static std::FILE *fopenUtf8(const std::string &path, const char *mode)
+{
+    std::wstring wpath = utf8ToWide(path);
+    if(wpath.empty()) return std::fopen(path.c_str(), mode); // 退化兜底(纯 ASCII 也安全)
+    std::wstring wmode(mode, mode + std::char_traits<char>::length(mode));
+    return _wfopen(wpath.c_str(), wmode.c_str());
+}
+bool fileRenameUtf8(const std::string &from, const std::string &to)
+{
+    std::wstring wf = utf8ToWide(from), wt = utf8ToWide(to);
+    if(wf.empty() || wt.empty()) return false;
+    DeleteFileW(wt.c_str());          // 目标已存在时先删，等价覆盖
+    return MoveFileW(wf.c_str(), wt.c_str()) != 0;
+}
+#else
+static std::FILE *fopenUtf8(const std::string &path, const char *mode)
+{
+    return std::fopen(path.c_str(), mode);
+}
+bool fileRenameUtf8(const std::string &from, const std::string &to)
+{
+    return std::rename(from.c_str(), to.c_str()) == 0;
+}
+#endif // _WIN32
+
 void sleep(int interval)
 {
     /*
@@ -901,7 +941,7 @@ std::string fileGet(const std::string &path, bool scope_limit)
     if(scope_limit && !isInScope(path))
         return std::string();
 
-    std::FILE *fp = std::fopen(path.c_str(), "rb");
+    std::FILE *fp = fopenUtf8(path, "rb");
     if(fp)
     {
         std::fseek(fp, 0, SEEK_END);
@@ -990,7 +1030,7 @@ int fileWrite(const std::string &path, const std::string &content, bool overwrit
     return 0;
     */
     const char *mode = overwrite ? "wb" : "ab";
-    std::FILE *fp = std::fopen(path.c_str(), mode);
+    std::FILE *fp = fopenUtf8(path, mode);
     std::fwrite(content.c_str(), 1, content.size(), fp);
     std::fclose(fp);
     return 0;
@@ -1152,57 +1192,59 @@ int to_int(const std::string &str, int def_value)
 
 std::string getFormData(const std::string &raw_data)
 {
-    std::stringstream strstrm;
-    std::string line;
+    // 标准 multipart/form-data 解析(替代旧逐字节匹配实现 —— 旧实现 buffer[j-k]
+    // 在 j-k<0 时越界，且对几十 KB 文件容易解析失败:小文件侥幸通过、大文件读不到)。
+    //
+    // 报文结构:
+    //   --<boundary>\r\n
+    //   Content-Disposition: ...\r\n
+    //   [Content-Type: ...\r\n]
+    //   \r\n                      ← header 与正文的空行
+    //   <文件原始字节>\r\n
+    //   --<boundary>--\r\n
+    //
+    // 做法:第一行取 boundary;找第一个空行(\r\n\r\n 或 \n\n)定位正文起点;
+    // 再找正文之后最近的 "\r\n--<boundary>" 作为正文终点。中间即文件内容，
+    // 二进制安全(不按行切、不逐字节比较)。
+    if(raw_data.empty())
+        return std::string();
 
-    std::string boundary;
-    std::string file; /* actual file content */
+    // 1) 取首行 boundary(到第一个 \r 或 \n 为止)，去掉可能的尾随 \r
+    std::string::size_type nl = raw_data.find_first_of("\r\n");
+    if(nl == std::string::npos)
+        return std::string();
+    std::string boundary = raw_data.substr(0, nl);
+    while(!boundary.empty() && (boundary.back() == '\r' || boundary.back() == '\n'))
+        boundary.pop_back();
+    if(boundary.empty())
+        return std::string();
 
-    int i = 0;
-
-    strstrm<<raw_data;
-
-    while (std::getline(strstrm, line))
+    // 2) 定位 header 结束的空行(优先 \r\n\r\n，回退 \n\n)
+    std::string::size_type body_start = raw_data.find("\r\n\r\n");
+    std::string::size_type sep_len = 4;
+    if(body_start == std::string::npos)
     {
-        if(i == 0)
-            boundary = line.substr(0, line.length() - 1); // Get boundary
-        else if(startsWith(line, boundary))
-            break; // The end
-        else if(line.length() == 1)
-        {
-            // Time to get raw data
-            char c;
-            int bl = boundary.length();
-            bool endfile = false;
-            char buffer[256];
-            while(!endfile)
-            {
-                int j = 0;
-                while(j < 256 && strstrm.get(c) && !endfile)
-                {
-                    buffer[j] = c;
-                    int k = 0;
-                    // Verify if we are at the end
-                    while(boundary[bl - 1 - k] == buffer[j - k])
-                    {
-                        if(k >= bl - 1)
-                        {
-                            // We are at the end of the file
-                            endfile = true;
-                            break;
-                        }
-                        k++;
-                    }
-                    j++;
-                }
-                file.append(buffer, j);
-                j = 0;
-            };
-            break;
-        }
-        i++;
+        body_start = raw_data.find("\n\n");
+        sep_len = 2;
     }
-    return file;
+    if(body_start == std::string::npos)
+        return std::string();
+    body_start += sep_len;
+
+    // 3) 找正文之后最近的结束 boundary
+    std::string end_marker = "\r\n" + boundary;
+    std::string::size_type body_end = raw_data.find(end_marker, body_start);
+    if(body_end == std::string::npos)
+    {
+        end_marker = "\n" + boundary;
+        body_end = raw_data.find(end_marker, body_start);
+    }
+    if(body_end == std::string::npos)
+        body_end = raw_data.rfind(boundary);
+    if(body_end == std::string::npos || body_end < body_start)
+        body_end = raw_data.size();
+
+    return raw_data.substr(body_start, body_end - body_start);
 }
 
 std::string UTF8ToCodePoint(const std::string &data)

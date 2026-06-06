@@ -27,6 +27,8 @@ if (usePng) {
   console.log(`✓ 检测到位图源: icon-source.png`);
   srcPng = PNG.sync.read(readFileSync(pngPath));
   console.log(`  原图 ${srcPng.width}×${srcPng.height}`);
+  srcPng = autoCropSquare(srcPng);
+  console.log(`  裁剪居中后 ${srcPng.width}×${srcPng.height}(去除透明留白,内容最大化)`);
 } else if (existsSync(svgPath)) {
   console.log(`✓ 使用矢量源: icon-source.svg`);
 } else {
@@ -37,6 +39,43 @@ if (usePng) {
 }
 
 const svgBuf = usePng ? null : readFileSync(svgPath);
+
+// 自动裁掉源图四周的透明留白,把图形内容居中放进一个正方形画布。
+// 解决"图标看起来比别的软件小"的问题 —— 根因是源图上下留白过大,内容只占画布
+// 一小块。裁剪后内容填满画布(留极小安全边,避免圆角遮罩切到边缘),视觉上显著放大。
+function autoCropSquare(src) {
+  let minX = src.width, minY = src.height, maxX = -1, maxY = -1;
+  for (let y = 0; y < src.height; y++) {
+    for (let x = 0; x < src.width; x++) {
+      if (src.data[(y * src.width + x) * 4 + 3] > 16) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < minX || maxY < minY) return src; // 全透明,原样返回
+  const cw = maxX - minX + 1;
+  const ch = maxY - minY + 1;
+  // 正方形边长 = 内容较长边 + 3% 安全边距(两侧各 1.5%)
+  const side = Math.ceil(Math.max(cw, ch) * 1.03);
+  const offX = Math.floor((side - cw) / 2);
+  const offY = Math.floor((side - ch) / 2);
+  const out = new PNG({ width: side, height: side });
+  out.data.fill(0); // 透明底
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      const si = ((minY + y) * src.width + (minX + x)) * 4;
+      const di = ((offY + y) * side + (offX + x)) * 4;
+      out.data[di] = src.data[si];
+      out.data[di + 1] = src.data[si + 1];
+      out.data[di + 2] = src.data[si + 2];
+      out.data[di + 3] = src.data[si + 3];
+    }
+  }
+  return out;
+}
 
 /** 缩放到指定边长(正方形输出)的 PNG buffer */
 function renderPng(size) {
@@ -105,5 +144,14 @@ for (const [name, size] of pngTargets) {
   writeFileSync(resolve(iconsDir, name), buf);
   console.log(`✓ ${name.padEnd(18)} (${size}x${size}, ${buf.length} bytes)`);
 }
+
+// ---------- 3. 生成前端侧边栏 logo(512x512:侧栏放大显示到 ~112px,高 DPI 下也锐利)----------
+const logoSize = 512;
+const logoBuf = renderPng(logoSize);
+const logoDir = resolve(here, "..", "src", "assets");
+mkdirSync(logoDir, { recursive: true });
+const logoPath = resolve(logoDir, "logo.png");
+writeFileSync(logoPath, logoBuf);
+console.log(`✓ src/assets/logo.png  (${logoSize}x${logoSize}, ${logoBuf.length} bytes)`);
 
 console.log("\n✓ 全部图标已重新生成,接下来运行 npm run tauri build");

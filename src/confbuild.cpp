@@ -365,7 +365,7 @@ std::string vlessConstruct(const std::string &group, const std::string &remarks,
     out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
     out += "    network: " + net + "\n";
     // Reality(基于 TLS 的反审查传输):必须同时给出 public-key,short-id 可选。
-    // mihomo 还需要 client-fingerprint,缺省时给 chrome,与主流 Reality 客户端一致。
+    // mihomo 还需要 client-fingerprint，缺省时给 chrome，与主流 Reality 客户端一致。
     if(useReality)
     {
         out += "    client-fingerprint: " + (client_fingerprint.empty() ? std::string("chrome") : client_fingerprint) + "\n";
@@ -450,8 +450,151 @@ std::string anytlsConstruct(const std::string &group, const std::string &remarks
     return out;
 }
 
-// =============================================================================
-// Plan B: pack ALL nodes into a single mihomo config so we can start the
+// TUIC v5(uuid+password)/ v4(token)。mihomo 字段:
+//   type: tuic / server / port / uuid / password (v5) 或 token (v4) /
+//   sni / alpn / congestion-controller / udp-relay-mode / reduce-rtt
+std::string tuicConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &uuid, const std::string &password, const std::string &token, const std::string &sni, const std::string &alpn, const std::string &congestion, const std::string &udp_relay_mode, bool reduce_rtt, const std::string &ech_server_name, tribool udp, tribool tfo, tribool scv)
+{
+    (void)group; (void)remarks; (void)tfo; (void)udp;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: tuic\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    if(!token.empty())
+        out += "    token: " + yq(token) + "\n";
+    if(!uuid.empty())
+        out += "    uuid: " + yq(uuid) + "\n";
+    if(!password.empty())
+        out += "    password: " + yq(password) + "\n";
+    if(!sni.empty())
+        out += "    sni: " + yq(sni) + "\n";
+    if(!alpn.empty())
+        out += "    alpn: [" + alpn + "]\n";
+    out += "    congestion-controller: " + (congestion.empty() ? std::string("bbr") : congestion) + "\n";
+    out += "    udp-relay-mode: " + (udp_relay_mode.empty() ? std::string("native") : udp_relay_mode) + "\n";
+    if(reduce_rtt)
+        out += "    reduce-rtt: true\n";
+    out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "false" : (scv ? "true" : "false")) + "\n";
+    out += echBlock(ech_server_name, "    ");
+    out += mihomoTail();
+    return out;
+}
+
+// Hysteria v1。mihomo 字段:auth-str / up / down / obfs / alpn / sni / protocol / ports
+std::string hysteriaConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &ports, const std::string &auth, const std::string &sni, const std::string &up, const std::string &down, const std::string &obfs, const std::string &alpn, const std::string &protocol, tribool udp, tribool tfo, tribool scv)
+{
+    (void)group; (void)remarks; (void)tfo; (void)udp;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: hysteria\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    if(!ports.empty())
+        out += "    ports: " + yq(ports) + "\n";
+    if(!auth.empty())
+        out += "    auth-str: " + yq(auth) + "\n";
+    if(!up.empty())
+        out += "    up: " + yq(up) + "\n";
+    if(!down.empty())
+        out += "    down: " + yq(down) + "\n";
+    if(!obfs.empty())
+        out += "    obfs: " + yq(obfs) + "\n";
+    if(!sni.empty())
+        out += "    sni: " + yq(sni) + "\n";
+    if(!alpn.empty())
+        out += "    alpn: [" + alpn + "]\n";
+    if(!protocol.empty())
+        out += "    protocol: " + yq(protocol) + "\n";
+    out += std::string("    skip-cert-verify: ") + (scv.is_undef() ? "true" : (scv ? "true" : "false")) + "\n";
+    out += mihomoTail();
+    return out;
+}
+
+// WireGuard。mihomo 字段:private-key / public-key / ip / (ipv6) / pre-shared-key / reserved
+std::string wireguardConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &private_key, const std::string &public_key, const std::string &ip, const std::string &ipv6, const std::string &preshared_key, const std::string &reserved, tribool udp)
+{
+    (void)group; (void)remarks;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: wireguard\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    private-key: " + yq(private_key) + "\n";
+    out += "    public-key: " + yq(public_key) + "\n";
+    if(!ip.empty())
+        out += "    ip: " + yq(ip) + "\n";
+    if(!ipv6.empty())
+        out += "    ipv6: " + yq(ipv6) + "\n";
+    if(!preshared_key.empty())
+        out += "    pre-shared-key: " + yq(preshared_key) + "\n";
+    if(!reserved.empty())
+        out += "    reserved: " + reserved + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    out += mihomoTail();
+    return out;
+}
+
+// SSH。mihomo 字段:username / password / private-key / host-key
+std::string sshConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &username, const std::string &password, const std::string &private_key)
+{
+    (void)group; (void)remarks;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: ssh\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    if(!username.empty())
+        out += "    username: " + yq(username) + "\n";
+    if(!password.empty())
+        out += "    password: " + yq(password) + "\n";
+    if(!private_key.empty())
+        out += "    private-key: " + yq(private_key) + "\n";
+    out += mihomoTail();
+    return out;
+}
+
+// Mieru。mihomo 字段:username / password / transport / port-range
+std::string mieruConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &port_range, const std::string &username, const std::string &password, const std::string &transport, tribool udp)
+{
+    (void)group; (void)remarks; (void)udp;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: mieru\n";
+    out += "    server: " + yq(add) + "\n";
+    if(!port_range.empty())
+        out += "    port-range: " + yq(port_range) + "\n";
+    else
+        out += "    port: " + port + "\n";
+    if(!username.empty())
+        out += "    username: " + yq(username) + "\n";
+    if(!password.empty())
+        out += "    password: " + yq(password) + "\n";
+    out += "    transport: " + (transport.empty() ? std::string("TCP") : transport) + "\n";
+    out += mihomoTail();
+    return out;
+}
+
+// ShadowTLS:本质是 ss 节点 + shadow-tls 插件。mihomo:type: ss + plugin: shadow-tls
+std::string shadowtlsConstruct(const std::string &group, const std::string &remarks, const std::string &add, const std::string &port, const std::string &password, const std::string &method, const std::string &stls_password, const std::string &stls_host, const std::string &version, tribool udp, tribool tfo, tribool scv)
+{
+    (void)group; (void)remarks; (void)tfo; (void)scv;
+    std::string out = mihomoHeader();
+    out += "  - name: node\n";
+    out += "    type: ss\n";
+    out += "    server: " + yq(add) + "\n";
+    out += "    port: " + port + "\n";
+    out += "    cipher: " + (method.empty() ? std::string("aes-256-gcm") : method) + "\n";
+    out += "    password: " + yq(password) + "\n";
+    out += "    plugin: shadow-tls\n";
+    out += "    plugin-opts:\n";
+    out += "      host: " + yq(stls_host) + "\n";
+    out += "      password: " + yq(stls_password) + "\n";
+    out += "      version: " + (version.empty() ? std::string("3") : version) + "\n";
+    out += std::string("    udp: ") + (udp.is_undef() ? "true" : (udp ? "true" : "false")) + "\n";
+    out += mihomoTail();
+    return out;
+}
 // kernel exactly once and switch outbounds via Clash API instead of restarting.
 //
 // `nodes` is mutated: each node.proxyStr (currently a self-contained single

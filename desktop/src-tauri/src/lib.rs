@@ -56,10 +56,13 @@ fn engine_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// 启动前同步 bundled engine 到 runtime engine。
 /// 仅在 release 模式下执行;dev 模式 runtime = bundled,跳过。
 ///
-/// 升级判定:对比 bundled 与已安装 stairspeedtest.exe 的 mtime+size。
-/// 之前用 CARGO_PKG_VERSION 字符串戳判定 — 开发期版本号不变就永远不同步,
-/// 用户必须"卸载 + 删数据"才能拿到最新二进制。改成文件指纹后,只要后端真的
-/// 有变化就自动同步,不再依赖 0.1.0 → 0.1.1 这种语义化升级。
+/// 升级判定 + 完整性校验:
+///   1. 主程序指纹(stairspeedtest.exe 的 size+mtime)— 升级时触发同步
+///   2. tools/ 关键 sentinel 文件 — 历史问题:某次首次安装 copy_dir 中途
+///      失败,只复制了根目录的 DLL/exe,tools/ 子树整个丢了,但 exe 指纹依然
+///      "看起来匹配",于是后续所有启动都 skip,导致 mihomo 永远拉不起来 +
+///      字体加载失败 + 测试结果全 0/N/A。
+///      现在改为只要任意一个 sentinel 缺失就强制重新同步。
 ///
 /// 用户的 logs/ 与 results/(历史记录、测试日志)始终保留,只覆盖 exe / DLL /
 /// tools / pref.ini 这些只读资产。
@@ -81,9 +84,21 @@ fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
             let m = std::fs::metadata(p).ok()?;
             Some((m.len(), m.modified().ok()?))
         };
-        if let (Some(a), Some(b)) = (fingerprint(&src_exe), fingerprint(&dst_exe)) {
-            if a == b {
-                return Ok(()); // 两侧 exe 完全一致,无需同步
+
+        // 关键资产 sentinel:这些文件缺一个就视为 runtime 不完整,必须重同步
+        let sentinels = [
+            std::path::PathBuf::from("tools/clients/mihomo.exe"),
+            std::path::PathBuf::from("tools/misc/SourceHanSansCN-Medium.otf"),
+            std::path::PathBuf::from("config.yaml"),
+            std::path::PathBuf::from("pref.ini"),
+        ];
+        let runtime_complete = sentinels.iter().all(|rel| dst.join(rel).exists());
+
+        if runtime_complete {
+            if let (Some(a), Some(b)) = (fingerprint(&src_exe), fingerprint(&dst_exe)) {
+                if a == b {
+                    return Ok(()); // 完整且 exe 指纹一致,无需同步
+                }
             }
         }
 
@@ -312,6 +327,38 @@ async fn api_post_file(
     Ok(text)
 }
 
+/// 选定本地配置文件后,由 Rust 端一步完成:读取文件字节 → multipart 上传到后端
+/// /readfileconfig → 返回后端响应文本(节点 JSON 数组,或 "error"/"running")。
+///
+/// 为什么不在前端做:Tauri webview 打包模式下 JS 侧读文件 + 多次 invoke 往返
+/// (read_file_base64 → atob → api_post_file)任一环出错都难以察觉,且经过最
+/// 脆弱的链路。收敛到 Rust 单命令后,文件读取与上传全程可控,任何失败都通过
+/// Result::Err 冒泡到前端显示,不再"点了没反应"。
+#[tauri::command]
+async fn import_config_file(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取文件失败 {path}: {e}"))?;
+    let file_name = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("config")
+        .to_string();
+    let url = format!("{}/readfileconfig", BACKEND_URL);
+    let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name);
+    let form = reqwest::multipart::Form::new().part("file", part);
+    let res = local_backend_client()
+        .post(&url)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("上传到后端失败: {e}"))?;
+    let status = res.status();
+    let text = res.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("/readfileconfig {}: {}", status.as_u16(), text));
+    }
+    Ok(text)
+}
+
 #[tauri::command]
 fn restart_backend(app: AppHandle, state: State<BackendState>) -> Result<(), String> {
     if let Some(mut c) = state.child.lock().unwrap().take() {
@@ -319,6 +366,9 @@ fn restart_backend(app: AppHandle, state: State<BackendState>) -> Result<(), Str
     }
     // 给 OS 一点时间清理端口/句柄
     std::thread::sleep(std::time::Duration::from_millis(400));
+    // 重启前先做完整性检查:如果用户的 runtime engine 缺资产(tools/ 子树丢失等),
+    // 这里会触发重新同步,从而让"设置 → 重启后端"成为通用自愈入口。
+    ensure_runtime_engine(&app)?;
     let new_child = spawn_backend(&app)?;
     *state.child.lock().unwrap() = Some(new_child);
     Ok(())
@@ -383,6 +433,61 @@ fn read_file_base64(path: String) -> Result<String, String> {
     Ok(STANDARD.encode(bytes))
 }
 
+/// 运行日志文件元信息(供"日志"页列出 engine/logs/ 下的日志)
+#[derive(Serialize)]
+struct LogFile {
+    name: String,
+    path: String,
+    size: u64,
+    modified_ms: i64,
+}
+
+/// 列出 engine/logs/ 下的所有 .log 文件,按修改时间倒序(最新在前)。
+#[tauri::command]
+fn list_log_files(app: AppHandle) -> Result<Vec<LogFile>, String> {
+    let dir = engine_dir(&app)?.join("logs");
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("log") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let modified_ms = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        out.push(LogFile {
+            name: path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string(),
+            path: path.to_string_lossy().into_owned(),
+            size: meta.len(),
+            modified_ms,
+        });
+    }
+    out.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    Ok(out)
+}
+
+/// 读取日志文本(UTF-8,有损解码避免个别坏字节报错)。
+/// 只返回文件尾部最多 max_kb KB —— 日志关心最新内容,超大文件也不卡前端。
+#[tauri::command]
+fn read_log_text(path: String, max_kb: Option<u64>) -> Result<String, String> {
+    let cap = max_kb.unwrap_or(512) * 1024;
+    let bytes = std::fs::read(&path).map_err(|e| format!("读日志失败 {path}: {e}"))?;
+    let slice: &[u8] = if cap > 0 && bytes.len() as u64 > cap {
+        &bytes[bytes.len() - cap as usize..]
+    } else {
+        &bytes[..]
+    };
+    Ok(String::from_utf8_lossy(slice).into_owned())
+}
+
 /// 删除一条历史记录(.log 与 .png 同时删)
 #[tauri::command]
 fn delete_history_item(app: AppHandle, name: String) -> Result<(), String> {
@@ -417,32 +522,30 @@ fn clear_history(app: AppHandle) -> Result<u32, String> {
     Ok(n)
 }
 
-/// 导出一条历史:把 results/<name>.log 和 .png 复制到 target_dir,文件名前加 prefix
+/// 导出一条历史:把 results/<name>.log 和 .png 复制到 target_dir。
+/// dest_name 非空时用作导出文件的基名(.log/.png 同名),为空则沿用原始 name。
+/// 供"另存为"对话框让用户自定义保存文件名。
 #[tauri::command]
 fn export_history(
     app: AppHandle,
     name: String,
     target_dir: String,
-    prefix: String,
+    dest_name: String,
 ) -> Result<Vec<String>, String> {
     let src_dir = engine_dir(&app)?.join("results");
     let dst_dir = std::path::PathBuf::from(&target_dir);
     if !dst_dir.is_dir() {
         return Err(format!("目标目录无效: {}", dst_dir.display()));
     }
+    let safe_dest = dest_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let base = if safe_dest.is_empty() { name.clone() } else { safe_dest };
     let mut written = Vec::new();
-    let safe_prefix = prefix.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
     for ext in ["log", "png"] {
         let src = src_dir.join(format!("{name}.{ext}"));
         if !src.exists() {
             continue;
         }
-        let fname = if safe_prefix.is_empty() {
-            format!("{name}.{ext}")
-        } else {
-            format!("{safe_prefix}-{name}.{ext}")
-        };
-        let dst = dst_dir.join(&fname);
+        let dst = dst_dir.join(format!("{base}.{ext}"));
         std::fs::copy(&src, &dst).map_err(|e| format!("复制失败 {}: {e}", dst.display()))?;
         written.push(dst.to_string_lossy().into_owned());
     }
@@ -674,9 +777,12 @@ pub fn run() {
             api_get,
             api_post_json,
             api_post_file,
+            import_config_file,
             restart_backend,
             list_history,
             read_file_base64,
+            list_log_files,
+            read_log_text,
             delete_history_item,
             clear_history,
             export_history,

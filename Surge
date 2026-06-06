@@ -1,0 +1,117 @@
+#!MANAGED-CONFIG https://owo.ecydy.com/subscribe/link/qqFL8TncDVyIwnKIwmOghe8ww2nHXVw9?surge=1 interval=604800 strict=true
+
+#---------------------------------------------------#
+## 上次更新于：2026-06-06 03:15:00
+#---------------------------------------------------#
+
+[General]
+loglevel = notify
+ipv6 = true
+replica = false
+exclude-simple-hostnames = true
+show-error-page-for-reject = true
+dns-server = 119.29.29.29, 223.5.5.5, 8.8.8.8, 1.1.1.1
+doh-server = https://dns.alidns.com/dns-query, https://doh.pub/dns-query
+skip-proxy = 127.0.0.1, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 100.64.0.0/10, 17.0.0.0/8, localhost, *.local, *.crashlytics.com
+always-real-ip = *.msftconnecttest.com, *.msftncsi.com, *.srv.nintendo.net, *.stun.playstation.net, xbox.*.microsoft.com, *.xboxlive.com
+external-controller-access = China@0.0.0.0:8233
+allow-wifi-access = true
+http-listen = 0.0.0.0:8234
+socks5-listen = 0.0.0.0:8235
+wifi-access-http-port = 6152
+wifi-access-socks5-port = 6153
+internet-test-url = http://wifi.vivo.com.cn/generate_204
+proxy-test-url = http://cp.cloudflare.com/generate_204
+test-timeout = 3
+enhanced-mode-by-rule = false
+read-etc-hosts = true
+
+
+[Proxy]
+直接连接 = direct
+
+🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x] = trojan, dashanren.ecydns.com, 443, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, sni=cfru.ecydns.com, ws=true, ws-path=/ru, ws-headers=Host:cfru.ecydns.com, ech=true
+🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x] = hysteria2, ru.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=ru.ecydns.com, up=1000, down=1000, port-hopping=30000-50000, port-hopping-interval=60
+🇹🇼 台湾 Ⅱ · A1 [Hysteria2] = hysteria2, twa.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=twa.ecydns.com, alpn=h3, up=600, down=600, port-hopping=30000-50000, port-hopping-interval=60
+🇩🇪 德国 Ⅱ · A1 [hy2] = hysteria2, de.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=de.ecydns.com, up=1000, down=1000, port-hopping=30000-50000, port-hopping-interval=60
+🇸🇬 新加坡 Ⅱ ·  A1 [CF] = trojan, dashanren.ecydns.com, 443, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, sni=cfsga.ecydns.com, ws=true, ws-path=/sg, ws-headers=Host:cfsga.ecydns.com, ech=true
+🇯🇵 日本 Ⅱ · A1 [CHT] = trojan, rukou.ecydns.com, 10010, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, sni=jpa.ecydns.com
+🇯🇵 日本 Ⅱ · A1 [hy2] = hysteria2, jpa.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=jpa.ecydns.com, up=300, down=300, port-hopping=30000-50000, port-hopping-interval=60
+🇯🇵 日本 Ⅱ · B1 [hy2 0.1x] = hysteria2, jpb2.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=jpb2.ecydns.com, up=3000, down=3000, port-hopping=30000-50000, port-hopping-interval=60
+🇫🇷 法国 Ⅱ · A1 [CF 0.1x] = trojan, dashanren.ecydns.com, 443, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, sni=cffr.ecydns.com, ws=true, ws-path=/fr, ws-headers=Host:cffr.ecydns.com, ech=true
+🇫🇷 法国 Ⅱ · A1 [hy2 0.1x] = hysteria2, fr.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=fr.ecydns.com, up=1000, down=1000, port-hopping=30000-50000, port-hopping-interval=60
+🇺🇸 美国 Ⅱ · A1 [CHT] = trojan, rukou.ecydns.com, 10011, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, sni=us.ecydns.com
+🇺🇸 美国 Ⅱ · A1 [hy2 0.1x] = hysteria2, us.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=us.ecydns.com, alpn=h3, up=1000, down=1000, port-hopping=30000-50000, port-hopping-interval=60
+🇺🇸 美国 Ⅹ · A1 [Hy2] = hysteria2, usus.ecydns.com, 10000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=usus.ecydns.com, up=1000, down=1000, port-hopping=10000-20000, port-hopping-interval=60
+🇺🇸 美国 Ⅹ · A1 [Trojan] = trojan, usus.ecydns.com, 443, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, sni=usus.ecydns.com
+🇺🇸 美国 Ⅹ · A4 [TUIC] = tuic, usus.ecydns.com, 2096, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, uuid=019dee96-ae22-726c-b77d-e1d1dbf8991e, version=5, sni=usus.ecydns.com, alpn=h3
+🇭🇰 香港 Ⅱ · A1 [CHT] = trojan, rukou.ecydns.com, 10000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, sni=hka.ecydns.com
+🇭🇰 香港 Ⅱ · B1 [hy2] = hysteria2, hkb.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=hkb.ecydns.com, alpn=h3, up=1000, down=1000, port-hopping=30000-50000, port-hopping-interval=60
+🇭🇰 香港 Ⅲ · D1 [hy2] = hysteria2, hkd.ecydns.com, 30000, password=019dee96-ae22-726c-b77d-e1d1dbf8991e, udp-relay=true, sni=hkd.ecydns.com, up=1000, down=1000, port-hopping=30000-50000, port-hopping-interval=60
+
+
+[Proxy Group]
+主节点 = select, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Available.png
+自动选择 = url-test, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], url = http://cp.cloudflare.com/generate_204, interval = 600, timeout = 5, tolerance = 100, icon-url = https://rules.ecydy.com/images/Delay.png
+故障转移 = fallback, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], url = http://cp.cloudflare.com/generate_204, interval = 600, timeout = 5, icon-url = https://rules.ecydy.com/images/Fallback.png
+OpenAI = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], icon-url = https://rules.ecydy.com/images/OpenAI.png
+Microsoft Copilot = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/MicrosoftCopilot.png
+Anthropic = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], icon-url = https://rules.ecydy.com/images/Anthropic.png
+Google服务 = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Google.png
+Apple服务 = select, 直接连接, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Apple.png
+Telegram = select, 主节点, 自动选择, 故障转移, 直接连接, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Telegram.png
+Line = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Line.png
+Netflix = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Netflix.png
+Amazon Prime Video = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/AmazonPrimeVideo.png
+Disney Plus = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/DisneyPlus.png
+HBO = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/HBO.png
+Hulu = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Hulu.png
+DAZN = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/DAZN.png
+TVB = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/TVB.png
+Abema = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Abema.png
+DMM = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/DMM.png
+Niconico = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Niconico.png
+Spotify = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Spotify.png
+哔哩哔哩 = select, 直接连接, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/BiliBili.png
+巴哈姆特 = select, 主节点, 自动选择, 故障转移, 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Bahamut.png
+TikTok = select, 主节点, 自动选择, 故障转移, 直接连接, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], icon-url = https://rules.ecydy.com/images/TikTok.png
+虚拟货币交易所 = select, 主节点, 自动选择, 故障转移, 🇷🇺 俄罗斯 Ⅱ · A1 [CF 0.1x], 🇷🇺 俄罗斯 Ⅱ · A1 [hy2 0.1x], 🇹🇼 台湾 Ⅱ · A1 [Hysteria2], 🇩🇪 德国 Ⅱ · A1 [hy2], 🇸🇬 新加坡 Ⅱ ·  A1 [CF], 🇯🇵 日本 Ⅱ · A1 [CHT], 🇯🇵 日本 Ⅱ · A1 [hy2], 🇯🇵 日本 Ⅱ · B1 [hy2 0.1x], 🇫🇷 法国 Ⅱ · A1 [CF 0.1x], 🇫🇷 法国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅱ · A1 [CHT], 🇺🇸 美国 Ⅱ · A1 [hy2 0.1x], 🇺🇸 美国 Ⅹ · A1 [Hy2], 🇺🇸 美国 Ⅹ · A1 [Trojan], 🇺🇸 美国 Ⅹ · A4 [TUIC], 🇭🇰 香港 Ⅱ · A1 [CHT], 🇭🇰 香港 Ⅱ · B1 [hy2], 🇭🇰 香港 Ⅲ · D1 [hy2], icon-url = https://rules.ecydy.com/images/Bitcoin.png
+
+
+[URL Rewrite]
+^https?://(www\.)?g\.cn https://www.google.com 302
+^https?://(www\.)?google\.cn https://www.google.com 302
+
+[MITM]
+skip-server-cert-verify = false
+h2 = true
+hostname = *.google.cn, *.g.cn
+
+[Rule]
+RULE-SET,https://rules.ecydy.com/Surge/DIRECT.list,DIRECT
+RULE-SET,https://rules.ecydy.com/Surge/Proxy.list,主节点
+RULE-SET,https://rules.ecydy.com/Surge/OpenAI.list,OpenAI
+RULE-SET,https://rules.ecydy.com/Surge/MicrosoftCopilot.list,Microsoft Copilot
+RULE-SET,https://rules.ecydy.com/Surge/Anthropic.list,Anthropic
+RULE-SET,https://rules.ecydy.com/Surge/Google.list,Google服务
+RULE-SET,https://rules.ecydy.com/Surge/Apple.list,Apple服务
+RULE-SET,https://rules.ecydy.com/Surge/Telegram.list,Telegram
+RULE-SET,https://rules.ecydy.com/Surge/Line.list,Line
+RULE-SET,https://rules.ecydy.com/Surge/Netflix.list,Netflix
+RULE-SET,https://rules.ecydy.com/Surge/AmazonPrimeVideo.list,Amazon Prime Video
+RULE-SET,https://rules.ecydy.com/Surge/Disney.list,Disney Plus
+RULE-SET,https://rules.ecydy.com/Surge/HBO.list,HBO
+RULE-SET,https://rules.ecydy.com/Surge/Hulu.list,Hulu
+RULE-SET,https://rules.ecydy.com/Surge/DAZN.list,DAZN
+RULE-SET,https://rules.ecydy.com/Surge/TVB.list,TVB
+RULE-SET,https://rules.ecydy.com/Surge/Abema.list,Abema
+RULE-SET,https://rules.ecydy.com/Surge/DMM.list,DMM
+RULE-SET,https://rules.ecydy.com/Surge/Niconico.list,Niconico
+RULE-SET,https://rules.ecydy.com/Surge/Spotify.list,Spotify
+RULE-SET,https://rules.ecydy.com/Surge/BiliBili.list,哔哩哔哩
+RULE-SET,https://rules.ecydy.com/Surge/Bahamut.list,巴哈姆特
+RULE-SET,https://rules.ecydy.com/Surge/TikTok.list,TikTok
+RULE-SET,https://rules.ecydy.com/Surge/VirtualCoins.list,虚拟货币交易所
+
+GEOIP,CN,DIRECT
+FINAL,主节点

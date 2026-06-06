@@ -10,6 +10,7 @@ export default function NodeList() {
     selected,
     filter,
     typeFilter,
+    group,
     setFilter,
     toggleSelect,
     selectAll,
@@ -90,7 +91,7 @@ export default function NodeList() {
               key={t}
               onClick={() => toggleType(t)}
               className={cn(
-                "px-2 py-1 text-xs rounded-md border transition",
+                "px-3 py-1 text-xs rounded-full border transition",
                 typeFilter.has(t)
                   ? "bg-primary/10 border-primary text-primary"
                   : "border-border text-fg-muted hover:text-fg"
@@ -136,7 +137,7 @@ export default function NodeList() {
                   <td className="py-2 px-3 truncate max-w-[260px]">
                     {c.config.remarks}
                   </td>
-                  <td className="py-2 px-3 text-fg-muted">{c.config.group}</td>
+                  <td className="py-2 px-3 text-fg-muted">{group.trim() || c.config.group}</td>
                   <td className="py-2 px-3">
                     <Badge variant="primary">{c.type}</Badge>
                   </td>

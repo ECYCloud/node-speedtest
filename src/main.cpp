@@ -55,17 +55,14 @@ int listen_port = 10870, cur_node_id = -1;
 
 bool ss_libev = true;
 bool ssr_libev = true;
-std::string def_test_file = "https://download.microsoft.com/download/2/0/E/20E90413-712F-438C-988E-FDAA79A8AC3D/dotnetfx35.exe";
+std::string def_test_file = "https://speed.cloudflare.com/__down?bytes=95000000";
 std::string def_upload_target = "http://losangeles.speed.googlefiber.net:3004/upload?time=0";
 std::vector<downloadLink> downloadFiles;
 std::vector<linkMatchRule> matchRules;
 string_array custom_exclude_remarks, custom_include_remarks, dict, trans;
 std::vector<nodeInfo> allNodes;
-std::vector<color> custom_color_groups;
-std::vector<int> custom_color_bounds;
 std::string speedtest_mode = "all";
 std::string override_conf_port = "";
-std::string export_color_style = "rainbow";
 int def_thread_count = 4;
 bool export_with_maxspeed = true;
 bool export_as_new_style = true;
@@ -199,22 +196,15 @@ extern std::string mihomo_kernel_version; // defined in renderer.cpp (footer)
 static void initUserAgent()
 {
 #ifdef _WIN32
-    const char *cmd = "tools\\clients\\mihomo.exe -v 2>&1";
-    FILE *pipe = _popen(cmd, "r");
+    const char *cmd = "tools\\clients\\mihomo.exe -v";
 #else
-    const char *cmd = "tools/clients/mihomo -v 2>&1";
-    FILE *pipe = popen(cmd, "r");
+    const char *cmd = "tools/clients/mihomo -v";
 #endif
-    std::string ver = MIHOMO_FALLBACK_VERSION, out;
-    if(pipe)
+    // 用静默捕获(CreateProcess + CREATE_NO_WINDOW)取版本，避免 _popen 弹 cmd 窗口
+    std::string ver = MIHOMO_FALLBACK_VERSION;
+    std::string out = runCommandCapture(cmd);
+    if(!out.empty())
     {
-        char buf[256];
-        while(fgets(buf, sizeof(buf), pipe)) out += buf;
-#ifdef _WIN32
-        _pclose(pipe);
-#else
-        pclose(pipe);
-#endif
         // Output looks like: "Mihomo Meta vX.Y.Z windows amd64 with go..."
         std::string::size_type v = out.find(" v");
         if(v != std::string::npos)
@@ -285,11 +275,11 @@ bool mihomoSwitchProxy(const std::string &name)
 // 走 mihomo Clash API 的 /proxies/<name>/delay 测延迟。
 //
 // 为什么不用 libcurl 直接通过 socks5 探测?
-//   * libcurl 短连接 + socks5 + mihomo 中转 + hy2/QUIC 拨号四层链路,
-//     hy2 等 QUIC 协议首包慢,经常 10-20s 内拿不到 200 响应,
-//     表现就是 hy2 节点测速能跑(长连接已建立),但延迟列全 N/A。
-//   * mihomo 内置的 /delay 由内核直接拨节点,对所有协议(含 QUIC)
-//     都有稳定的延迟数值,这是 Clash Verge / Karing 等 GUI 也在用的接口。
+//   * libcurl 短连接 + socks5 + mihomo 中转 + hy2/QUIC 拨号四层链路，
+//     hy2 等 QUIC 协议首包慢，经常 10-20s 内拿不到 200 响应，
+//     表现就是 hy2 节点测速能跑(长连接已建立)，但延迟列全 N/A。
+//   * mihomo 内置的 /delay 由内核直接拨节点，对所有协议(含 QUIC)
+//     都有稳定的延迟数值，这是 Clash Verge / Karing 等 GUI 也在用的接口。
 //
 // 返回:成功时把延迟 ms 写入 *out_ms 并返回 true;失败 false。
 // 端点形如 http://127.0.0.1:9990/proxies/<urlencoded-name>/delay?url=...&timeout=5000
@@ -326,7 +316,7 @@ int killClient(int client)
     return 0;
 }
 
-// 启动 mihomo 内核并把所有节点打包到一份 config.yaml 里,
+// 启动 mihomo 内核并把所有节点打包到一份 config.yaml 里，
 // 同时把每个 node.proxyStr 重写为 "node-N"(buildAllNodesYAML 内部完成),
 // 这样后续 mihomoSwitchProxy 才能用节点名(而不是整个 yaml)切换 outbound。
 //
@@ -352,7 +342,7 @@ bool launchMihomoForNodes(std::vector<nodeInfo> &nodes)
     if(!needs_kernel) return false;
     if(!avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS]) return false;
 
-    // 先杀掉旧的 mihomo,避免 9990 / 65432 端口冲突
+    // 先杀掉旧的 mihomo，避免 9990 / 65432 端口冲突
 #ifdef _WIN32
     killProgram("mihomo.exe");
 #else
@@ -385,7 +375,6 @@ void readConf(std::string path)
 {
     downloadLink link;
     linkMatchRule rule;
-    color tmpColor;
     unsigned int i;
     string_array vChild, vArray;
     INIReader ini;
@@ -417,39 +406,9 @@ void readConf(std::string path)
     ini.GetBoolIfExist("multilink_export_as_one_image", multilink_export_as_one_image);
     ini.GetBoolIfExist("single_test_force_export", single_test_force_export);
     ini.GetBoolIfExist("export_as_new_style", export_as_new_style);
-    ini.GetIfExist("export_color_style", export_color_style);
     ini.GetIntIfExist("image_scale", image_scale);
     if(image_scale < 1) image_scale = 1;
     if(image_scale > 6) image_scale = 6;
-    if(ini.ItemExist("custom_color_groups"))
-    {
-        vChild = split(ini.Get("custom_color_groups"), "|");
-        if(vChild.size() >= 2)
-        {
-            for(i = 0; i < vChild.size(); i++)
-            {
-                vArray = split(vChild[i], ",");
-                if(vArray.size() == 3)
-                {
-                    tmpColor.red = stoi(trim(vArray[0]));
-                    tmpColor.green = stoi(trim(vArray[1]));
-                    tmpColor.blue = stoi(trim(vArray[2]));
-                    custom_color_groups.push_back(tmpColor);
-                }
-            }
-        }
-    }
-    if(ini.ItemExist("custom_color_bounds"))
-    {
-        vChild = split(ini.Get("custom_color_bounds"), "|");
-        if(vChild.size() >= 2)
-        {
-            for(i = 0; i < vChild.size(); i++)
-            {
-                custom_color_bounds.push_back(stoi(vChild[i]));
-            }
-        }
-    }
     ini.GetBoolIfExist("export_as_ssrspeed", export_as_ssrspeed);
 
     ini.EnterSection("rules");
@@ -488,11 +447,6 @@ void readConf(std::string path)
             }
         }
     }
-    if(export_color_style == "custom")
-    {
-        colorgroup.swap(custom_color_groups);
-        bounds.swap(custom_color_bounds);
-    }
 
     ini.EnterSection("webserver");
     ini.GetBoolIfExist("webserver_mode", webserver_mode);
@@ -503,13 +457,13 @@ void readConf(std::string path)
 extern std::vector<nodeInfo> allNodes;
 void saveResult(std::vector<nodeInfo> &nodes);
 
-// renderer.cpp 里定义的全局,batchTest 开始时填充它们供 PNG footer 使用
+// renderer.cpp 里定义的全局，batchTest 开始时填充它们供 PNG footer 使用
 extern std::string g_local_country, g_local_region, g_local_city, g_local_isp;
 extern std::string g_test_start_time, g_test_tz_label;
 
 // ip-api.com 返回的 ISP 字段是英文(China Telecom backbone / Chinanet 等),
-// 这里做关键词→中文映射,避免在结果图脚部和前端展示一长串英文。
-// 没匹配的保留原文(便于排查),不破坏可读性。
+// 这里做关键词→中文映射，避免在结果图脚部和前端展示一长串英文。
+// 没匹配的保留原文(便于排查)，不破坏可读性。
 static std::string translateIsp(const std::string &raw)
 {
     if(raw.empty()) return raw;
@@ -552,9 +506,9 @@ static std::string translateIsp(const std::string &raw)
     return raw;
 }
 
-// 异步查询本机出口公网 IP 的国家/省/市/运营商,直接调 ip-api.com 中文接口,
-// 与 desktop/src-tauri 保持一致,所有字段中文化。失败时静默返回(footer 自然
-// 跳过对应行)。仅供 PNG footer 展示,不影响测试主流程。
+// 异步查询本机出口公网 IP 的国家/省/市/运营商，直接调 ip-api.com 中文接口，
+// 与 desktop/src-tauri 保持一致，所有字段中文化。失败时静默返回(footer 自然
+// 跳过对应行)。仅供 PNG footer 展示，不影响测试主流程。
 static void fetchLocalGeoAsync()
 {
     std::thread([](){
@@ -573,9 +527,9 @@ static void fetchLocalGeoAsync()
     }).detach();
 }
 
-// 形如 "(UTC+08:00)" 的时区标签,取自当前 tm 的 tm_gmtoff(Windows 用 _timezone)。
-// strftime("%Z") 在 Windows 上会返回本地化全名("中国标准时间"),长度不可控且
-// 容易撑破 footer,所以这里手工拼接。
+// 形如 "(UTC+08:00)" 的时区标签，取自当前 tm 的 tm_gmtoff(Windows 用 _timezone)。
+// strftime("%Z") 在 Windows 上会返回本地化全名("中国标准时间")，长度不可控且
+// 容易撑破 footer，所以这里手工拼接。
 static std::string buildTzLabel()
 {
     long offset_sec = 0;
@@ -647,7 +601,6 @@ void signalHandler(int signum)
             std::string pngpath = exportRender(resultPath, allNodes,
                                                export_with_maxspeed,
                                                export_sort_method,
-                                               export_color_style,
                                                export_as_new_style,
                                                test_nat_type);
             writeLog(LOG_TYPE_INFO, "Partial result picture saved to " + pngpath);
@@ -806,8 +759,8 @@ int singleTest(nodeInfo &node)
             writeLog(LOG_TYPE_INFO, "Switching mihomo outbound to '" + node.proxyStr + "'...");
             if(!mihomoSwitchProxy(node.proxyStr))
                 writeLog(LOG_TYPE_WARN, "Proxy switch failed; the test will probably show no speed.");
-            // mihomo 切完 outbound 之后,QUIC 类协议(hy2/anytls/tuic)需要更长
-            // 时间完成新链路握手 — TCP 协议 200ms 够,UDP 类至少 800ms 才稳。
+            // mihomo 切完 outbound 之后，QUIC 类协议(hy2/anytls/tuic)需要更长
+            // 时间完成新链路握手 — TCP 协议 200ms 够，UDP 类至少 800ms 才稳。
             // 给所有协议统一 800ms 是最简单且不会拖慢太多的方案。
             sleep(800);
         }
@@ -831,27 +784,28 @@ int singleTest(nodeInfo &node)
     }
 
     printMsg(SPEEDTEST_MESSAGE_STARTPING, rpcmode, id);
-    // Latency model: 只保留 HTTPS 延迟一项(2025-10 改动)。
-    // 走内核的协议(VLESS/Trojan/Hysteria2/AnyTLS/SS/SSR/VMess)统一用 mihomo
-    // 内置的 /proxies/<name>/delay 接口测延迟 — 内核内部直接拨节点,绕开
-    // libcurl→socks5→mihomo→QUIC 的多层链路,对 hy2/anytls 等 QUIC 协议同样稳定。
-    // 之前用 libcurl 经 socks5 探测时,hy2 节点经常因 QUIC 首包慢导致全 N/A。
-    // SOCKS5 / HTTP 节点不经内核,只能继续用 libcurl 通过代理探测。
+    // 延迟测量策略:
+    //   * 内核特有协议(Hysteria2 / Hysteria v1 / TUIC / AnyTLS)走 mihomo 内置
+    //     /proxies/<name>/delay —— 这些协议经 libcurl→socks5 探测首包慢/多路复用，
+    //     常拿不到结果导致延迟全 N/A，只能让内核直接拨测。
+    //   * 经典 TCP 协议(VLESS/Trojan/SS/SSR/VMess)用 measureLatency:预热一次吃掉
+    //     TCP+TLS 握手(丢弃)，再复用 keep-alive 连接测多次，排除握手耗时，回到真实 RTT。
     const std::string https_probe_url = "https://cp.cloudflare.com/generate_204";
 
     if(speedtest_mode != "speedonly")
     {
-        bool via_kernel = node.linkType != SPEEDTEST_MESSAGE_FOUNDSOCKS &&
-                          node.linkType != SPEEDTEST_MESSAGE_FOUNDHTTP &&
+        bool via_kernel = (node.linkType == SPEEDTEST_MESSAGE_FOUNDHY2 ||
+                           node.linkType == SPEEDTEST_MESSAGE_FOUNDHYSTERIA ||
+                           node.linkType == SPEEDTEST_MESSAGE_FOUNDTUIC ||
+                           node.linkType == SPEEDTEST_MESSAGE_FOUNDANYTLS) &&
                           !node.proxyStr.empty();
         double latency_ms = -1.0;
         int rawms[10] = {};
 
         if(via_kernel)
         {
-            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API...");
-            // 跑 3 次取平均,与原 libcurl 路径行为一致;失败的轮次填 0,
-            // PNG sparkline / 折线还能用 raw 数组反映稳定性。
+            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API (kernel-only protocol)...");
+            // 内核特有协议:mihomo /delay 跑 3 次取平均，失败轮填 0
             int ok = 0;
             int sum = 0;
             for(int i = 0; i < 3; ++i)
@@ -872,7 +826,8 @@ int singleTest(nodeInfo &node)
         }
         else
         {
-            writeLog(LOG_TYPE_INFO, "Measuring latency via libcurl through proxy...");
+            // TCP 类:预热复用连接，排除 TLS 握手，取多次平均
+            writeLog(LOG_TYPE_INFO, "Measuring latency via libcurl (warm-up + reuse, handshake excluded)...");
             latency_ms = measureLatency(https_probe_url, proxy, 3, rawms,
                                         rpcmode ? "" : "延迟");
         }
@@ -893,7 +848,7 @@ int singleTest(nodeInfo &node)
             node.sitePing.assign(t);
             writeLog(LOG_TYPE_INFO, "Latency: " + node.sitePing + " ms");
         }
-        // 连通性以下载是否成功为准,延迟探测失败不算硬错误
+        // 连通性以下载是否成功为准，延迟探测失败不算硬错误
         node.pkLoss = latency_ms < 0.0 ? "100.00%" : "0.00%";
     }
     else
@@ -917,7 +872,7 @@ int singleTest(nodeInfo &node)
             printMsg(SPEEDTEST_MESSAGE_GOTNAT, rpcmode, id, node.natType.get());
     }
 
-    // sitePing 与 avgPing 已同源,这里只补一次 GotGPing 消息,前端 webgui 仍能拿到
+    // sitePing 与 avgPing 已同源，这里只补一次 GotGPing 消息，前端 webgui 仍能拿到
     if(test_site_ping)
         printMsg(SPEEDTEST_MESSAGE_GOTGPING, rpcmode, id, node.sitePing);
 
@@ -974,7 +929,7 @@ void batchTest(std::vector<nodeInfo> &nodes)
     }
     else
     {
-        // 一开测就记录时间与时区,renderer footer 用它代替"生成时间"。
+        // 一开测就记录时间与时区，renderer footer 用它代替"生成时间"。
         // custom_group 为空时使用第一个节点的 group(通常是协议默认 group)。
         g_test_start_time = getTime(3);
         g_test_tz_label = buildTzLabel();
@@ -982,7 +937,7 @@ void batchTest(std::vector<nodeInfo> &nodes)
         if(log_group.empty() && !nodes.empty())
             log_group = nodes.front().group;
         resultInit(log_group);
-        // 异步查询本机出口位置 + 运营商,不阻塞测试主流程
+        // 异步查询本机出口位置 + 运营商，不阻塞测试主流程
         fetchLocalGeoAsync();
 
         writeLog(LOG_TYPE_INFO, "Speedtest will now begin.");
@@ -1012,7 +967,7 @@ void batchTest(std::vector<nodeInfo> &nodes)
         {
             printMsg(SPEEDTEST_MESSAGE_PICSAVING, rpcmode);
             writeLog(LOG_TYPE_INFO, "Now exporting result...");
-            pngpath = exportRender(resultPath, nodes, export_with_maxspeed, export_sort_method, export_color_style, export_as_new_style, test_nat_type);
+            pngpath = exportRender(resultPath, nodes, export_with_maxspeed, export_sort_method, export_as_new_style, test_nat_type);
             writeLog(LOG_TYPE_INFO, "Result saved to " + pngpath + " .");
             printMsg(SPEEDTEST_MESSAGE_PICSAVED, rpcmode, pngpath);
             if(rpcmode)
@@ -1339,7 +1294,7 @@ int main(int argc, char* argv[])
                 printMsg(SPEEDTEST_MESSAGE_PICSAVING, rpcmode);
                 writeLog(LOG_TYPE_INFO, "Now exporting result...");
                 curPNGPath = replace_all_distinct(resultPath, ".log", "") + "-multilink-all.png";
-                pngpath = exportRender(curPNGPath, allNodes, export_with_maxspeed, export_sort_method, export_color_style, export_as_new_style, test_nat_type);
+                pngpath = exportRender(curPNGPath, allNodes, export_with_maxspeed, export_sort_method, export_as_new_style, test_nat_type);
                 printMsg(SPEEDTEST_MESSAGE_PICSAVED, rpcmode, pngpath);
                 writeLog(LOG_TYPE_INFO, "Result saved to " + pngpath + " .");
                 if(rpcmode)
@@ -1360,7 +1315,7 @@ int main(int argc, char* argv[])
                         printMsg(SPEEDTEST_MESSAGE_PICSAVINGMULTI, rpcmode, std::to_string(i + 1));
                         writeLog(LOG_TYPE_INFO, "Now exporting result for group " + std::to_string(i + 1) + "...");
                         curPNGPath = curPNGPathPrefix + "-multilink-group" + std::to_string(i + 1) + ".png";
-                        pngpath = exportRender(curPNGPath, nodes, export_with_maxspeed, export_sort_method, export_color_style, export_as_new_style, test_nat_type);
+                        pngpath = exportRender(curPNGPath, nodes, export_with_maxspeed, export_sort_method, export_as_new_style, test_nat_type);
                         printMsg(SPEEDTEST_MESSAGE_PICSAVEDMULTI, rpcmode, std::to_string(i + 1), pngpath);
                         writeLog(LOG_TYPE_INFO, "Group " + std::to_string(i + 1) + " result saved to " + pngpath + " .");
                     }
@@ -1389,7 +1344,7 @@ int main(int argc, char* argv[])
         saveResult(allNodes);
         printMsg(SPEEDTEST_MESSAGE_PICSAVING, rpcmode);
         writeLog(LOG_TYPE_INFO, "Now exporting result...");
-        pngpath = exportRender(resultPath, allNodes, export_with_maxspeed, export_sort_method, export_color_style, export_as_new_style, test_nat_type);
+        pngpath = exportRender(resultPath, allNodes, export_with_maxspeed, export_sort_method, export_as_new_style, test_nat_type);
         printMsg(SPEEDTEST_MESSAGE_PICSAVED, rpcmode, pngpath);
         writeLog(LOG_TYPE_INFO, "Result saved to " + pngpath + " .");
         if(rpcmode)

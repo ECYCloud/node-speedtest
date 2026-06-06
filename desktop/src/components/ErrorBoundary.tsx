@@ -6,8 +6,8 @@ interface State {
   err: Error | null;
 }
 
-/** 兜底错误边界:任何渲染期异常都不会让 webview 整页空白,
-    而是显示友好错误信息 + 返回主页/重试,保证用户能自救而不必关软件。 */
+/** 兜底错误边界:任何渲染期异常都不会让 webview 整页空白，
+    而是显示友好错误信息 + 返回主页/重试，保证用户能自救而不必关软件。 */
 export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { err: null };
 
@@ -20,7 +20,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     console.error("[ErrorBoundary]", err, info);
   }
 
-  /** 返回主页:清空 store 中可能导致渲染崩溃的脏数据,然后重置错误边界 */
+  /** 返回主页:清空 store 中可能导致渲染崩溃的脏数据，然后重置错误边界 */
   resetToHome = () => {
     useTest.setState({
       configs: [],
@@ -44,7 +44,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             页面渲染出错
           </div>
           <div className="text-sm text-fg-muted mb-1">
-            软件遇到了一个未预料的错误,可以尝试以下操作:
+            软件遇到了一个未预料的错误，可以尝试以下操作:
           </div>
           <pre className="text-xs text-fg-muted bg-border/30 rounded-md p-2.5 my-3 break-all whitespace-pre-wrap">
             {this.state.err.message}
@@ -52,14 +52,14 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
           <div className="flex items-center gap-2">
             <button
               onClick={this.resetToHome}
-              className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg bg-primary text-primary-fg text-sm font-medium hover:brightness-110"
+              className="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-primary text-primary-fg text-sm font-medium shadow-sm shadow-primary/30 hover:brightness-110 active:scale-[0.98] transition"
             >
               <Home size={14} />
               返回主页
             </button>
             <button
               onClick={() => this.setState({ err: null })}
-              className="inline-flex items-center gap-2 h-9 px-3.5 rounded-lg border border-border bg-bg-elev text-sm hover:bg-border/40"
+              className="inline-flex items-center gap-2 h-9 px-5 rounded-full border border-border bg-bg-elev text-sm hover:bg-border/40 active:scale-[0.98] transition"
             >
               <RefreshCw size={14} />
               重试当前页

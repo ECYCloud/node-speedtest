@@ -69,8 +69,12 @@ void logInit(bool rpcmode)
     writeLog(LOG_TYPE_INFO, log_header);
 }
 
-// 文件名安全化:把 Windows / 通用文件系统的非法字符替换成下划线,并去掉首尾空白。
-// 仅供 results/ 目录下的文件名使用,不需要 URL 编码级别的转义。
+// 文件名安全化:把 Windows / 通用文件系统的非法字符替换成下划线，并去掉首尾空白。
+// 仅供 results/ 目录下的文件名使用，不需要 URL 编码级别的转义。
+//
+// 注意:非 ASCII 字符(中文等)予以保留 —— 文件最终通过 misc.cpp 的 fileWrite /
+// renderer 的临时名重命名走 _wfopen / MoveFileW(UTF-8→UTF-16)落盘，中文文件名
+// 在 Windows 上能正确创建，不再走窄字符 fopen 的 ACP 解码导致的乱码路径。
 static std::string sanitizeForFilename(const std::string &s)
 {
     std::string out;

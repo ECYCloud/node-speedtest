@@ -32,18 +32,22 @@ export function Button({
   className,
   ...rest
 }: ButtonProps) {
+  // 现代胶囊按钮:全圆角 + 主色按钮带轻微阴影，鼠标悬停时阴影/亮度同步增强;
+  // 红色危险按钮颜色不变，仅形状统一为胶囊。
   const variants: Record<string, string> = {
     primary:
-      "bg-primary text-primary-fg hover:brightness-110 active:scale-[0.98] disabled:opacity-50",
+      "bg-primary text-primary-fg shadow-sm shadow-primary/30 " +
+      "hover:brightness-110 hover:shadow-primary/40 active:scale-[0.98] disabled:opacity-50",
     secondary:
       "border border-border bg-bg-elev hover:bg-border/40 active:scale-[0.98] disabled:opacity-50",
     ghost: "hover:bg-border/40 disabled:opacity-50",
     danger:
-      "bg-danger text-white hover:brightness-110 active:scale-[0.98] disabled:opacity-50",
+      "bg-danger text-white shadow-sm shadow-danger/30 " +
+      "hover:brightness-110 hover:shadow-danger/40 active:scale-[0.98] disabled:opacity-50",
   };
   const sizes: Record<string, string> = {
-    sm: "h-8 px-3 text-xs rounded-md gap-1.5",
-    md: "h-9 px-3.5 text-sm rounded-lg gap-2",
+    sm: "h-8 px-4 text-xs rounded-full gap-1.5",
+    md: "h-9 px-5 text-sm rounded-full gap-2",
   };
   return (
     <button
@@ -65,7 +69,7 @@ export function Input({
   return (
     <input
       className={cn(
-        "h-9 w-full px-3 rounded-lg border border-border bg-bg text-sm",
+        "h-9 w-full px-4 rounded-full border border-border bg-bg text-sm",
         "outline-none focus:border-primary focus:ring-2 focus:ring-primary/20",
         "placeholder:text-fg-muted/70",
         className
@@ -89,7 +93,7 @@ interface SelectProps {
   placeholder?: string;
 }
 
-/** 自定义下拉:菜单与触发器都由前端绘制,展开/收起状态可控,箭头跟着旋转 */
+/** 自定义下拉:菜单与触发器都由前端绘制，展开/收起状态可控，箭头跟着旋转 */
 export function Select({
   value,
   onChange,
@@ -124,7 +128,7 @@ export function Select({
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "h-9 w-full px-3 pr-9 rounded-lg border border-border bg-bg text-sm text-left",
+          "h-9 w-full px-4 pr-10 rounded-full border border-border bg-bg text-sm text-left",
           "outline-none focus:border-primary focus:ring-2 focus:ring-primary/20",
           "disabled:opacity-50 flex items-center"
         )}
@@ -135,7 +139,7 @@ export function Select({
         <ChevronDown
           size={16}
           className={cn(
-            "absolute right-2.5 top-1/2 -translate-y-1/2 text-fg-muted transition-transform",
+            "absolute right-3 top-1/2 -translate-y-1/2 text-fg-muted transition-transform",
             open && "rotate-180"
           )}
         />
@@ -143,7 +147,9 @@ export function Select({
       {open && (
         <div
           className={cn(
-            "absolute z-50 mt-1.5 w-full rounded-lg border border-border bg-bg-elev shadow-lg",
+            // 弹层宽度自适应:至少与触发器同宽，但允许超出以容纳长选项，避免被截断
+            "absolute z-50 mt-1.5 min-w-full w-max max-w-[min(28rem,calc(100vw-2rem))]",
+            "rounded-lg border border-border bg-bg-elev shadow-lg",
             "max-h-60 overflow-auto py-1"
           )}
         >
@@ -158,12 +164,12 @@ export function Select({
                   setOpen(false);
                 }}
                 className={cn(
-                  "w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2",
+                  "w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 whitespace-nowrap",
                   active ? "text-primary bg-primary/5" : "hover:bg-border/40"
                 )}
               >
-                <span className="truncate">{o.label}</span>
-                {active && <Check size={14} />}
+                <span>{o.label}</span>
+                {active && <Check size={14} className="shrink-0" />}
               </button>
             );
           })}
@@ -207,16 +213,18 @@ export function SectionTitle({
   desc,
   right,
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   desc?: string;
   right?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-end justify-between gap-3 mb-3 min-w-0">
+    <div className="flex items-center justify-between gap-3 mb-3 min-w-0">
       <div className="min-w-0 flex-1">
-        <div className="text-base font-semibold truncate">{children}</div>
+        {children && (
+          <div className="text-base font-semibold truncate">{children}</div>
+        )}
         {desc && (
-          <div className="text-xs text-fg-muted mt-0.5 truncate">{desc}</div>
+          <div className={`text-xs text-fg-muted truncate${children ? " mt-0.5" : ""}`}>{desc}</div>
         )}
       </div>
       {right && <div className="shrink-0">{right}</div>}

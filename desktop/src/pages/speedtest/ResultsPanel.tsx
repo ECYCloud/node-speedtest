@@ -8,7 +8,7 @@ export default function ResultsPanel() {
   const running = status === "running";
 
   // 当前正在测试的节点的实时进度:gPing 是 HTTPS 延迟(秒),dspeed 是平均速度(字节/秒)。
-  // 后端测速期间会持续更新 dspeed,所以这里直接复用同一份 NodeResult 形状。
+  // 后端测速期间会持续更新 dspeed，所以这里直接复用同一份 NodeResult 形状。
   const cur = current && current.remarks ? current : null;
   const curPing = cur?.gPing ?? 0;
   const curSpeed = cur?.dspeed ?? 0;
@@ -18,7 +18,7 @@ export default function ResultsPanel() {
       <SectionTitle
         desc={
           running
-            ? "正在测试,实时更新当前节点延迟与下载速度"
+            ? "正在测试，实时更新当前节点延迟与下载速度"
             : results.length > 0
               ? `共 ${results.length} 个节点已完成`
               : undefined
@@ -64,7 +64,7 @@ export default function ResultsPanel() {
       {!running && results.length === 0 ? (
         <div className="flex flex-col items-center justify-center text-fg-muted text-sm gap-2 py-10">
           <Inbox size={28} className="opacity-60" />
-          <span>导入节点后开始测速,结果会出现在这里</span>
+          <span>导入节点后开始测速，结果会出现在这里</span>
         </div>
       ) : (
         <div className="overflow-auto rounded-lg border border-border max-h-[480px]">
@@ -77,7 +77,7 @@ export default function ResultsPanel() {
                 <th className="py-2 px-3 bg-bg-elev">丢包</th>
                 <th className="py-2 px-3 bg-bg-elev">平均速度</th>
                 <th className="py-2 px-3 bg-bg-elev">最高速度</th>
-                <th className="py-2 px-3 bg-bg-elev">流量</th>
+                <th className="py-2 px-3 bg-bg-elev">消耗流量</th>
               </tr>
             </thead>
             <tbody>

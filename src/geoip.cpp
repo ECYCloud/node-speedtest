@@ -56,7 +56,7 @@ geoIPInfo getGeoIPInfo(const std::string &ip, const std::string &proxy)
         return info;
     }
 
-    if(json.HasMember("code"))
+    if(json.HasMember("code") && json["code"].IsInt())
     {
         if(json["code"].GetInt() == 401)
         {

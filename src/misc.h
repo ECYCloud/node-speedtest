@@ -92,6 +92,9 @@ std::string fileGet(const std::string &path, bool scope_limit = false);
 int fileWrite(const std::string &path, const std::string &content, bool overwrite);
 bool fileExist(const std::string &path, bool scope_limit = false);
 bool fileCopy(const std::string &source, const std::string &dest);
+// UTF-8 文件名安全的重命名(Windows 走 MoveFileW)。供 renderer 把 ASCII 临时
+// PNG 名重命名为含中文的目标名，绕过 PNGwriter 内部窄字符 fopen 的乱码问题。
+bool fileRenameUtf8(const std::string &from, const std::string &to);
 std::string fileToBase64(const std::string &filepath);
 std::string fileGetMD5(const std::string &filepath);
 

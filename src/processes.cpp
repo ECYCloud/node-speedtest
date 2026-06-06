@@ -57,6 +57,69 @@ int chkProgram(std::string command)
 }
 
 
+// 静默执行命令并捕获 stdout(已合并 stderr)文本。Windows 走 CreateProcess +
+// CREATE_NO_WINDOW + 匿名管道，不弹 cmd 窗口;非 Windows 退回 popen。
+std::string runCommandCapture(const std::string &command, const std::string &runpath)
+{
+    std::string output;
+#ifdef _WIN32
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;        // 管道句柄需可被子进程继承
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE rd = NULL, wr = NULL;
+    if(!CreatePipe(&rd, &wr, &sa, 0))
+        return output;
+    // 读取端不被子进程继承，避免子进程持有导致 ReadFile 永不返回 EOF
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFO si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = wr;
+    si.hStdError  = wr;
+    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION pi = {};
+    std::string cmdline = command;          // CreateProcess 会就地修改，需可写缓冲
+    std::vector<char> buf(cmdline.begin(), cmdline.end());
+    buf.push_back('\0');
+    const char *workdir = runpath.empty() ? NULL : runpath.c_str();
+
+    BOOL ok = CreateProcess(NULL, buf.data(), NULL, NULL, TRUE,
+                            CREATE_NO_WINDOW, NULL, workdir, &si, &pi);
+    CloseHandle(wr);                        // 父进程关闭写端，否则读不到 EOF
+    if(!ok)
+    {
+        CloseHandle(rd);
+        return output;
+    }
+    char rbuf[4096];
+    DWORD n = 0;
+    while(ReadFile(rd, rbuf, sizeof(rbuf), &n, NULL) && n > 0)
+        output.append(rbuf, n);
+    CloseHandle(rd);
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+#else
+    std::string full = runpath.empty() ? command
+                                       : ("cd \"" + runpath + "\" && " + command);
+    FILE *pipe = popen(full.c_str(), "r");
+    if(pipe)
+    {
+        char rbuf[4096];
+        size_t n;
+        while((n = fread(rbuf, 1, sizeof(rbuf), pipe)) > 0)
+            output.append(rbuf, n);
+        pclose(pipe);
+    }
+#endif
+    return output;
+}
+
 bool runProgram(std::string command, std::string runpath, bool wait)
 {
 #ifdef _WIN32

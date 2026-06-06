@@ -1009,6 +1009,23 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
 
             singleproxy["cipher"] >>= cipher;
             singleproxy["password"] >>= password;
+            // ShadowTLS:ss + plugin: shadow-tls，单独走 shadowtlsConstruct
+            if(singleproxy["plugin"].IsDefined() &&
+               safe_as<std::string>(singleproxy["plugin"]) == "shadow-tls")
+            {
+                std::string stls_host, stls_pass, stls_ver = "3";
+                if(singleproxy["plugin-opts"].IsDefined())
+                {
+                    singleproxy["plugin-opts"]["host"] >>= stls_host;
+                    singleproxy["plugin-opts"]["password"] >>= stls_pass;
+                    if(singleproxy["plugin-opts"]["version"].IsDefined())
+                        stls_ver = safe_as<std::string>(singleproxy["plugin-opts"]["version"]);
+                }
+                node.linkType = SPEEDTEST_MESSAGE_FOUNDSHADOWTLS;
+                node.group = SHADOWTLS_DEFAULT_GROUP;
+                node.proxyStr = shadowtlsConstruct(SHADOWTLS_DEFAULT_GROUP, ps, server, port, password, cipher, stls_pass, stls_host, stls_ver, udp, tfo, scv);
+                break;
+            }
             if(singleproxy["plugin"].IsDefined())
             {
                 switch(hash_(safe_as<std::string>(singleproxy["plugin"])))
@@ -1158,8 +1175,8 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
             if(singleproxy["reality-opts"].IsDefined())
             {
                 vless_security = "reality";
-                // 关键修复:之前只设置了 security,没读取 public-key/short-id,
-                // 导致 vlessConstruct 拼出来的 yaml 缺少 reality-opts 块,mihomo 直接连不上
+                // 关键修复:之前只设置了 security，没读取 public-key/short-id,
+                // 导致 vlessConstruct 拼出来的 yaml 缺少 reality-opts 块，mihomo 直接连不上
                 singleproxy["reality-opts"]["public-key"] >>= reality_pbk;
                 if(singleproxy["reality-opts"]["short-id"].IsDefined())
                     singleproxy["reality-opts"]["short-id"] >>= reality_sid;
@@ -1203,6 +1220,94 @@ void explodeClash(Node yamlnode, const std::string &custom_port, std::vector<nod
             singleproxy["sni"] >>= at_sni;
             node.linkType = SPEEDTEST_MESSAGE_FOUNDANYTLS;
             node.proxyStr = anytlsConstruct(group, ps, server, port, at_password, at_sni, ech_server_name, udp, tfo, scv);
+            break;
+        }
+        case "tuic"_hash:
+        {
+            group = TUIC_DEFAULT_GROUP;
+            std::string tu_uuid, tu_pass, tu_token, tu_sni, tu_alpn, tu_cc, tu_urm;
+            bool tu_rtt = false;
+            singleproxy["uuid"] >>= tu_uuid;
+            singleproxy["password"] >>= tu_pass;
+            singleproxy["token"] >>= tu_token;
+            if(singleproxy["sni"].IsDefined()) singleproxy["sni"] >>= tu_sni;
+            else if(singleproxy["servername"].IsDefined()) singleproxy["servername"] >>= tu_sni;
+            singleproxy["congestion-controller"] >>= tu_cc;
+            singleproxy["udp-relay-mode"] >>= tu_urm;
+            if(safe_as<std::string>(singleproxy["reduce-rtt"]) == "true") tu_rtt = true;
+            // alpn 可能是 [h3] 数组，拼成逗号分隔
+            if(singleproxy["alpn"].IsDefined() && singleproxy["alpn"].IsSequence())
+            {
+                for(size_t a = 0; a < singleproxy["alpn"].size(); a++)
+                {
+                    if(a) tu_alpn += ", ";
+                    tu_alpn += safe_as<std::string>(singleproxy["alpn"][a]);
+                }
+            }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDTUIC;
+            node.proxyStr = tuicConstruct(group, ps, server, port, tu_uuid, tu_pass, tu_token, tu_sni, tu_alpn, tu_cc, tu_urm, tu_rtt, ech_server_name, udp, tfo, scv);
+            break;
+        }
+        case "hysteria"_hash:
+        {
+            group = HYSTERIA_DEFAULT_GROUP;
+            std::string hy_auth, hy_sni, hy_up, hy_down, hy_obfs, hy_alpn, hy_proto, hy_ports;
+            if(singleproxy["auth-str"].IsDefined()) singleproxy["auth-str"] >>= hy_auth;
+            else if(singleproxy["auth_str"].IsDefined()) singleproxy["auth_str"] >>= hy_auth;
+            singleproxy["sni"] >>= hy_sni;
+            singleproxy["up"] >>= hy_up;
+            singleproxy["down"] >>= hy_down;
+            singleproxy["obfs"] >>= hy_obfs;
+            singleproxy["protocol"] >>= hy_proto;
+            singleproxy["ports"] >>= hy_ports;
+            if(singleproxy["alpn"].IsDefined() && singleproxy["alpn"].IsSequence())
+                for(size_t a = 0; a < singleproxy["alpn"].size(); a++)
+                { if(a) hy_alpn += ", "; hy_alpn += safe_as<std::string>(singleproxy["alpn"][a]); }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDHYSTERIA;
+            node.proxyStr = hysteriaConstruct(group, ps, server, port, hy_ports, hy_auth, hy_sni, hy_up, hy_down, hy_obfs, hy_alpn, hy_proto, udp, tfo, scv);
+            break;
+        }
+        case "wireguard"_hash:
+        {
+            group = WIREGUARD_DEFAULT_GROUP;
+            std::string wg_priv, wg_pub, wg_ip, wg_ipv6, wg_psk, wg_reserved;
+            singleproxy["private-key"] >>= wg_priv;
+            singleproxy["public-key"] >>= wg_pub;
+            singleproxy["ip"] >>= wg_ip;
+            singleproxy["ipv6"] >>= wg_ipv6;
+            singleproxy["pre-shared-key"] >>= wg_psk;
+            if(singleproxy["reserved"].IsDefined() && singleproxy["reserved"].IsSequence())
+            {
+                wg_reserved = "[";
+                for(size_t a = 0; a < singleproxy["reserved"].size(); a++)
+                { if(a) wg_reserved += ", "; wg_reserved += safe_as<std::string>(singleproxy["reserved"][a]); }
+                wg_reserved += "]";
+            }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDWIREGUARD;
+            node.proxyStr = wireguardConstruct(group, ps, server, port, wg_priv, wg_pub, wg_ip, wg_ipv6, wg_psk, wg_reserved, udp);
+            break;
+        }
+        case "ssh"_hash:
+        {
+            group = SSH_DEFAULT_GROUP;
+            std::string sh_user, sh_pass, sh_key;
+            singleproxy["username"] >>= sh_user;
+            singleproxy["password"] >>= sh_pass;
+            singleproxy["private-key"] >>= sh_key;
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDSSH;
+            node.proxyStr = sshConstruct(group, ps, server, port, sh_user, sh_pass, sh_key);
+            break;
+        }
+        case "mieru"_hash:
+        {
+            group = MIERU_DEFAULT_GROUP;
+            std::string mi_user, mi_pass, mi_trans, mi_prange;
+            singleproxy["username"] >>= mi_user;
+            singleproxy["password"] >>= mi_pass;
+            singleproxy["transport"] >>= mi_trans;
+            singleproxy["port-range"] >>= mi_prange;
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDMIERU;
+            node.proxyStr = mieruConstruct(group, ps, server, port, mi_prange, mi_user, mi_pass, mi_trans, udp);
             break;
         }
         case "snell"_hash:
@@ -1660,6 +1765,82 @@ bool explodeSurge(std::string surge, const std::string &custom_port, std::vector
 
             node.proxyStr = trojanConstruct(node.group, remarks, server, port, password, host, true, udp, tfo, scv);
             break;
+        case "hysteria2"_hash: // surge / surfboard style hysteria2
+        case "hysteria"_hash:
+        {
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDHY2;
+            node.group = HY2_DEFAULT_GROUP;
+            server = trim(configs[1]);
+            port = custom_port.empty() ? trim(configs[2]) : custom_port;
+            if(port == "0")
+                continue;
+            std::string hy_pass, hy_sni, hy_up, hy_down, hy_ports, hy_hop, hy_obfs, hy_obfs_pass;
+            for(i = 3; i < configs.size(); i++)
+            {
+                vArray = split(configs[i], "=");
+                if(vArray.size() != 2)
+                    continue;
+                itemName = trim(vArray[0]);
+                itemVal = trim(vArray[1]);
+                // 去掉可能的引号(surfboard 的 port-hopping="30000-50000")
+                if(itemVal.size() >= 2 && itemVal.front() == '"' && itemVal.back() == '"')
+                    itemVal = itemVal.substr(1, itemVal.size() - 2);
+                switch(hash_(itemName))
+                {
+                    case "password"_hash: hy_pass = itemVal; break;
+                    case "sni"_hash: hy_sni = itemVal; break;
+                    case "up"_hash: case "upload-bandwidth"_hash: hy_up = itemVal; break;
+                    case "down"_hash: case "download-bandwidth"_hash: hy_down = itemVal; break;
+                    case "port-hopping"_hash: hy_ports = itemVal; break;
+                    case "port-hopping-interval"_hash: hy_hop = itemVal; break;
+                    case "obfs"_hash: hy_obfs = itemVal; break;
+                    case "obfs-password"_hash: hy_obfs_pass = itemVal; break;
+                    case "udp-relay"_hash: udp = itemVal; break;
+                    case "skip-cert-verify"_hash: scv = itemVal; break;
+                    default: continue;
+                }
+            }
+            if(hy_sni.empty() && !isIPv4(server) && !isIPv6(server))
+                hy_sni = server;
+            node.proxyStr = hysteria2Construct(node.group, remarks, server, port, hy_ports, hy_pass, hy_sni, hy_obfs, hy_obfs_pass, hy_up, hy_down, "", udp, tfo, scv, hy_hop);
+            break;
+        }
+        case "tuic"_hash: // surge / surfboard style tuic
+        {
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDTUIC;
+            node.group = TUIC_DEFAULT_GROUP;
+            server = trim(configs[1]);
+            port = custom_port.empty() ? trim(configs[2]) : custom_port;
+            if(port == "0")
+                continue;
+            std::string tu_uuid, tu_pass, tu_token, tu_sni, tu_alpn, tu_cc, tu_urm;
+            bool tu_rtt = false;
+            for(i = 3; i < configs.size(); i++)
+            {
+                vArray = split(configs[i], "=");
+                if(vArray.size() != 2)
+                    continue;
+                itemName = trim(vArray[0]);
+                itemVal = trim(vArray[1]);
+                switch(hash_(itemName))
+                {
+                    case "uuid"_hash: tu_uuid = itemVal; break;
+                    case "password"_hash: tu_pass = itemVal; break;
+                    case "token"_hash: tu_token = itemVal; break;
+                    case "sni"_hash: tu_sni = itemVal; break;
+                    case "alpn"_hash: tu_alpn = itemVal; break;
+                    case "congestion-controller"_hash: case "congestion-control"_hash: tu_cc = itemVal; break;
+                    case "udp-relay-mode"_hash: tu_urm = itemVal; break;
+                    case "reduce-rtt"_hash: tu_rtt = (itemVal == "true"); break;
+                    case "skip-cert-verify"_hash: scv = itemVal; break;
+                    default: continue;
+                }
+            }
+            if(tu_sni.empty() && !isIPv4(server) && !isIPv6(server))
+                tu_sni = server;
+            node.proxyStr = tuicConstruct(node.group, remarks, server, port, tu_uuid, tu_pass, tu_token, tu_sni, tu_alpn, tu_cc, tu_urm, tu_rtt, "", udp, tfo, scv);
+            break;
+        }
         case "snell"_hash:
             node.linkType = SPEEDTEST_MESSAGE_FOUNDSNELL;
             node.group = SNELL_DEFAULT_GROUP;
@@ -1860,6 +2041,45 @@ bool explodeSurge(std::string surge, const std::string &custom_port, std::vector
                 node.group = TROJAN_DEFAULT_GROUP;
                 node.proxyStr = trojanConstruct(node.group, remarks, server, port, password, host, tls == "true", udp, tfo, scv, tls13);
                 break;
+            case "vless"_hash: //quantumult x style vless link
+            {
+                server = trim(configs[0].substr(0, configs[0].rfind(":")));
+                port = custom_port.empty() ? trim(configs[0].substr(configs[0].rfind(":") + 1)) : custom_port;
+                if(port == "0")
+                    continue;
+                std::string uuid_v, vl_obfs, vl_uri, vl_host, vl_sni;
+                for(i = 1; i < configs.size(); i++)
+                {
+                    vArray = split(trim(configs[i]), "=");
+                    if(vArray.size() != 2)
+                        continue;
+                    itemName = trim(vArray[0]);
+                    itemVal = trim(vArray[1]);
+                    switch(hash_(itemName))
+                    {
+                        case "password"_hash: uuid_v = itemVal; break; // QX 用 password 承载 vless 的 uuid
+                        case "tag"_hash: remarks = itemVal; break;
+                        case "obfs"_hash: vl_obfs = itemVal; break;       // wss / over-tls / ws
+                        case "obfs-uri"_hash: vl_uri = itemVal; break;    // ws path
+                        case "obfs-host"_hash: vl_host = itemVal; break;  // ws host
+                        case "tls-host"_hash: vl_sni = itemVal; break;
+                        case "udp-relay"_hash: udp = itemVal; break;
+                        case "fast-open"_hash: tfo = itemVal; break;
+                        case "tls-verification"_hash: scv = itemVal == "false"; break;
+                        default: continue;
+                    }
+                }
+                if(remarks.empty())
+                    remarks = server + ":" + port;
+                // obfs=wss → ws+tls;over-tls → tcp+tls;ws → ws(无 tls)
+                std::string vl_net = (vl_obfs == "wss" || vl_obfs == "ws") ? "ws" : "tcp";
+                std::string vl_sec = (vl_obfs == "wss" || vl_obfs == "over-tls") ? "tls" : "";
+                if(vl_sni.empty()) vl_sni = vl_host.empty() ? server : vl_host;
+                node.linkType = SPEEDTEST_MESSAGE_FOUNDVLESS;
+                node.group = VLESS_DEFAULT_GROUP;
+                node.proxyStr = vlessConstruct(node.group, remarks, server, port, uuid_v, "", "none", vl_net, vl_sec, vl_sni, vl_uri, vl_host, "", udp, tfo, scv);
+                break;
+            }
             case "http"_hash: //quantumult x style http links
                 server = trim(configs[0].substr(0, configs[0].rfind(":")));
                 port = custom_port.empty() ? trim(configs[0].substr(configs[0].rfind(":") + 1)) : custom_port;
@@ -2032,6 +2252,255 @@ bool chkIgnore(const nodeInfo &node, string_array &exclude_remarks, string_array
     return excluded || !included;
 }
 
+// 解析 sing-box JSON 配置(outbounds 数组)，把每个真实代理节点转成 nodeInfo。
+// 字段映射镜像 explodeClash:提取后调用同一套 xxxConstruct() 生成 proxyStr,
+// 这样后续 buildAllNodesYAML / mihomo 测速链路完全复用，无需额外适配。
+// 跳过 direct/block/dns/selector/urltest 等非节点 outbound。
+int explodeSingbox(const std::string &content, const std::string &custom_port, std::vector<nodeInfo> &nodes)
+{
+    rapidjson::Document d;
+    d.Parse(content.data());
+    if(d.HasParseError() || !d.IsObject() || !d.HasMember("outbounds") || !d["outbounds"].IsArray())
+        return 0;
+
+    // 小工具:安全读字符串 / 整数 / 嵌套对象
+    auto S = [](const rapidjson::Value &v, const char *k) -> std::string {
+        if(v.IsObject() && v.HasMember(k))
+        {
+            const auto &m = v[k];
+            if(m.IsString()) return m.GetString();
+            if(m.IsInt64())  return std::to_string(m.GetInt64());
+            if(m.IsBool())   return m.GetBool() ? "true" : "false";
+        }
+        return std::string();
+    };
+    auto portOf = [&](const rapidjson::Value &v) -> std::string {
+        if(!custom_port.empty()) return custom_port;
+        if(v.HasMember("server_port"))
+        {
+            const auto &p = v["server_port"];
+            if(p.IsInt64()) return std::to_string(p.GetInt64());
+            if(p.IsString()) return p.GetString();
+        }
+        return std::string();
+    };
+
+    int added = 0;
+    const auto &arr = d["outbounds"];
+    for(rapidjson::SizeType i = 0; i < arr.Size(); ++i)
+    {
+        const auto &o = arr[i];
+        if(!o.IsObject()) continue;
+        std::string type = S(o, "type");
+        std::string ps   = S(o, "tag");
+        std::string server = S(o, "server");
+        std::string port = portOf(o);
+        // 非代理节点(分组/直连/拦截/dns/ntp 等)没有 server/port，直接跳过
+        if(server.empty() || port.empty() || port == "0")
+            continue;
+
+        // TLS / ECH(sing-box: tls.enabled / tls.server_name / tls.ech.query_server_name)
+        bool tls_on = false;
+        std::string sni, ech_sn, reality_pbk, reality_sid, client_fp;
+        if(o.HasMember("tls") && o["tls"].IsObject())
+        {
+            const auto &t = o["tls"];
+            tls_on = S(t, "enabled") == "true";
+            sni = S(t, "server_name");
+            if(t.HasMember("utls") && t["utls"].IsObject())
+                client_fp = S(t["utls"], "fingerprint");
+            if(t.HasMember("ech") && t["ech"].IsObject() && S(t["ech"], "enabled") == "true")
+                ech_sn = S(t["ech"], "query_server_name");
+            if(t.HasMember("reality") && t["reality"].IsObject() && S(t["reality"], "enabled") == "true")
+            {
+                reality_pbk = S(t["reality"], "public_key");
+                reality_sid = S(t["reality"], "short_id");
+            }
+        }
+        // transport(ws / grpc):path + Host
+        std::string net = "tcp", ws_path, ws_host;
+        if(o.HasMember("transport") && o["transport"].IsObject())
+        {
+            const auto &tr = o["transport"];
+            net = S(tr, "type");
+            if(net == "ws")
+            {
+                ws_path = S(tr, "path");
+                if(tr.HasMember("headers") && tr["headers"].IsObject() &&
+                   tr["headers"].HasMember("Host"))
+                {
+                    const auto &hh = tr["headers"]["Host"];
+                    if(hh.IsString()) ws_host = hh.GetString();
+                    else if(hh.IsArray() && hh.Size() > 0 && hh[0].IsString()) ws_host = hh[0].GetString();
+                }
+            }
+            else if(net == "grpc")
+                ws_path = S(tr, "service_name");
+        }
+
+        nodeInfo node;
+        tribool udp, tfo, scv;
+        switch(hash_(type))
+        {
+        case "trojan"_hash:
+        {
+            std::string password = S(o, "password");
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDTROJAN;
+            node.group = TROJAN_DEFAULT_GROUP;
+            node.proxyStr = trojanConstruct(node.group, ps, server, port, password, sni, true, udp, tfo, scv, tribool(), net, ws_path, ws_host, ech_sn);
+            break;
+        }
+        case "vless"_hash:
+        {
+            std::string uuid_v = S(o, "uuid"), flow = S(o, "flow");
+            std::string security = reality_pbk.size() ? "reality" : (tls_on ? "tls" : "");
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDVLESS;
+            node.group = VLESS_DEFAULT_GROUP;
+            node.proxyStr = vlessConstruct(node.group, ps, server, port, uuid_v, flow, "none", net, security, sni, ws_path, ws_host, ech_sn, udp, tfo, scv, reality_pbk, reality_sid, client_fp);
+            break;
+        }
+        case "hysteria2"_hash:
+        case "hy2"_hash:
+        {
+            std::string password = S(o, "password"), up, down, obfs, obfs_pass;
+            if(o.HasMember("obfs") && o["obfs"].IsObject())
+            {
+                obfs = S(o["obfs"], "type");
+                obfs_pass = S(o["obfs"], "password");
+            }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDHY2;
+            node.group = HY2_DEFAULT_GROUP;
+            node.proxyStr = hysteria2Construct(node.group, ps, server, port, "", password, sni, obfs, obfs_pass, up, down, ech_sn, udp, tfo, scv);
+            break;
+        }
+        case "anytls"_hash:
+        {
+            std::string password = S(o, "password");
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDANYTLS;
+            node.group = ANYTLS_DEFAULT_GROUP;
+            node.proxyStr = anytlsConstruct(node.group, ps, server, port, password, sni, ech_sn, udp, tfo, scv);
+            break;
+        }
+        case "tuic"_hash:
+        {
+            std::string uuid_v = S(o, "uuid"), password = S(o, "password");
+            std::string cc = S(o, "congestion_control"), urm = S(o, "udp_relay_mode");
+            bool rtt = S(o, "zero_rtt_handshake") == "true";
+            std::string alpn;
+            if(o.HasMember("tls") && o["tls"].IsObject() && o["tls"].HasMember("alpn"))
+            {
+                const auto &al = o["tls"]["alpn"];
+                if(al.IsArray())
+                    for(rapidjson::SizeType a = 0; a < al.Size(); ++a)
+                    {
+                        if(a) alpn += ", ";
+                        if(al[a].IsString()) alpn += al[a].GetString();
+                    }
+                else if(al.IsString()) alpn = al.GetString();
+            }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDTUIC;
+            node.group = TUIC_DEFAULT_GROUP;
+            node.proxyStr = tuicConstruct(node.group, ps, server, port, uuid_v, password, "", sni, alpn, cc, urm, rtt, ech_sn, udp, tfo, scv);
+            break;
+        }
+        case "hysteria"_hash:
+        {
+            // sing-box hysteria v1: up_mbps/down_mbps(数字) auth_str/auth obfs tls.alpn
+            std::string auth = S(o, "auth_str");
+            if(auth.empty()) auth = S(o, "auth");
+            std::string up = S(o, "up_mbps"), down = S(o, "down_mbps");
+            std::string obfs = S(o, "obfs");
+            std::string alpn;
+            if(o.HasMember("tls") && o["tls"].IsObject() && o["tls"].HasMember("alpn"))
+            {
+                const auto &al = o["tls"]["alpn"];
+                if(al.IsArray())
+                    for(rapidjson::SizeType a = 0; a < al.Size(); ++a)
+                    { if(a) alpn += ", "; if(al[a].IsString()) alpn += al[a].GetString(); }
+                else if(al.IsString()) alpn = al.GetString();
+            }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDHYSTERIA;
+            node.group = HYSTERIA_DEFAULT_GROUP;
+            node.proxyStr = hysteriaConstruct(node.group, ps, server, port, "", auth, sni, up, down, obfs, alpn, "", udp, tfo, scv);
+            break;
+        }
+        case "wireguard"_hash:
+        {
+            // sing-box: private_key / peer_public_key / local_address[] / pre_shared_key / reserved
+            std::string priv = S(o, "private_key"), pub = S(o, "peer_public_key");
+            std::string psk = S(o, "pre_shared_key");
+            std::string ip, ipv6;
+            if(o.HasMember("local_address") && o["local_address"].IsArray())
+            {
+                const auto &la = o["local_address"];
+                for(rapidjson::SizeType a = 0; a < la.Size(); ++a)
+                {
+                    if(!la[a].IsString()) continue;
+                    std::string addr = la[a].GetString();
+                    // 去掉 CIDR 后缀
+                    std::string bare = addr.substr(0, addr.find('/'));
+                    if(bare.find(':') != std::string::npos) { if(ipv6.empty()) ipv6 = bare; }
+                    else { if(ip.empty()) ip = bare; }
+                }
+            }
+            std::string reserved;
+            if(o.HasMember("reserved") && o["reserved"].IsArray())
+            {
+                const auto &rv = o["reserved"];
+                reserved = "[";
+                for(rapidjson::SizeType a = 0; a < rv.Size(); ++a)
+                { if(a) reserved += ", "; if(rv[a].IsInt64()) reserved += std::to_string(rv[a].GetInt64()); }
+                reserved += "]";
+            }
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDWIREGUARD;
+            node.group = WIREGUARD_DEFAULT_GROUP;
+            node.proxyStr = wireguardConstruct(node.group, ps, server, port, priv, pub, ip, ipv6, psk, reserved, udp);
+            break;
+        }
+        case "ssh"_hash:
+        {
+            // sing-box: user / password / private_key
+            std::string user = S(o, "user"), password = S(o, "password"), pkey = S(o, "private_key");
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDSSH;
+            node.group = SSH_DEFAULT_GROUP;
+            node.proxyStr = sshConstruct(node.group, ps, server, port, user, password, pkey);
+            break;
+        }
+        case "shadowsocks"_hash:
+        {
+            std::string method = S(o, "method"), password = S(o, "password");
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDSS;
+            node.group = SS_DEFAULT_GROUP;
+            node.proxyStr = ssConstruct(node.group, ps, server, port, password, method, "", "", false, udp, tfo, scv);
+            break;
+        }
+        case "vmess"_hash:
+        {
+            std::string id = S(o, "uuid"), aid = S(o, "alter_id");
+            std::string cipher = S(o, "security"); if(cipher.empty()) cipher = "auto";
+            std::string tls = tls_on ? "tls" : "";
+            node.linkType = SPEEDTEST_MESSAGE_FOUNDVMESS;
+            node.group = V2RAY_DEFAULT_GROUP;
+            node.proxyStr = vmessConstruct(node.group, ps, server, port, "", id, aid.empty() ? "0" : aid, net, cipher, ws_path, ws_host, "", tls, udp, tfo, scv);
+            break;
+        }
+        default:
+            continue; // 未支持的协议(tuic/wireguard/shadowtls 等)跳过
+        }
+
+        if(node.proxyStr.empty())
+            continue;
+        if(ps.empty()) ps = server + ":" + port;
+        node.remarks = ps;
+        node.server = server;
+        node.port = to_int(port, 1);
+        node.id = static_cast<int>(nodes.size());
+        nodes.emplace_back(std::move(node));
+        added++;
+    }
+    return added;
+}
+
 int explodeConf(std::string filepath, const std::string &custom_port, bool sslibev, bool ssrlibev, std::vector<nodeInfo> &nodes)
 {
     std::ifstream infile;
@@ -2047,6 +2516,14 @@ int explodeConf(std::string filepath, const std::string &custom_port, bool sslib
 int explodeConfContent(const std::string &content, const std::string &custom_port, bool sslibev, bool ssrlibev, std::vector<nodeInfo> &nodes)
 {
     int filetype = -1;
+
+    // sing-box JSON 配置:outbounds 数组 + server_port(下划线，区别于 Clash 的 port)。
+    // 先尝试解析，成功(解析出 >=1 节点)直接返回;失败则回退到下方原有格式检测，零误伤。
+    if(strFind(content, "\"outbounds\"") && strFind(content, "\"server_port\""))
+    {
+        if(explodeSingbox(content, custom_port, nodes) > 0)
+            return SPEEDTEST_ERROR_NONE;
+    }
 
     if(strFind(content, "\"version\""))
         filetype = SPEEDTEST_MESSAGE_FOUNDSS;
@@ -2244,6 +2721,49 @@ void explodeAnyTLS(const std::string &link, const std::string &custom_port, node
     node.proxyStr = anytlsConstruct(ANYTLS_DEFAULT_GROUP, remark, host, port, password, sni, ech_sn, tribool(), tribool(), scv);
 }
 
+// tuic://<uuid>:<password>@host:port?congestion_control=&udp_relay_mode=&sni=&alpn=#remark
+// (Shadowrocket / 标准 TUIC v5 链接)
+void explodeTUIC(const std::string &link, const std::string &custom_port, nodeInfo &node)
+{
+    std::string creds, host, port, query, remark;
+    if(!splitProxyURI(link, "tuic://", creds, host, port, query, remark))
+        return;
+    if(!custom_port.empty()) port = custom_port;
+
+    // creds = uuid:password
+    std::string uuid, password;
+    string_size colon = creds.find(':');
+    if(colon != creds.npos)
+    {
+        uuid = UrlDecode(creds.substr(0, colon));
+        password = UrlDecode(creds.substr(colon + 1));
+    }
+    else
+        uuid = UrlDecode(creds);
+
+    std::string sni = UrlDecode(getUrlArg(query, "sni"));
+    if(sni.empty()) sni = UrlDecode(getUrlArg(query, "peer"));
+    std::string alpn = UrlDecode(getUrlArg(query, "alpn"));
+    std::string cc = UrlDecode(getUrlArg(query, "congestion_control"));
+    if(cc.empty()) cc = UrlDecode(getUrlArg(query, "congestion-controller"));
+    std::string urm = UrlDecode(getUrlArg(query, "udp_relay_mode"));
+    std::string ech_sn = parseEchServerName(getUrlArg(query, "ech"));
+    std::string token = UrlDecode(getUrlArg(query, "token"));
+    bool rtt = getUrlArg(query, "reduce_rtt") == "1" || getUrlArg(query, "reduce-rtt") == "true";
+    std::string scv_arg = getUrlArg(query, "allow_insecure");
+    if(scv_arg.empty()) scv_arg = getUrlArg(query, "insecure");
+    tribool scv;
+    if(!scv_arg.empty()) scv = (scv_arg == "1" || scv_arg == "true");
+
+    if(remark.empty()) remark = host + ":" + port;
+    node.linkType = SPEEDTEST_MESSAGE_FOUNDTUIC;
+    node.group = TUIC_DEFAULT_GROUP;
+    node.remarks = remark;
+    node.server = host;
+    node.port = (unsigned short)to_int(port, 1);
+    node.proxyStr = tuicConstruct(TUIC_DEFAULT_GROUP, remark, host, port, uuid, password, token, sni, alpn, cc, urm, rtt, ech_sn, tribool(), tribool(), scv);
+}
+
 void explode(const std::string &link, bool sslibev, bool ssrlibev, const std::string &custom_port, nodeInfo &node)
 {
     // TODO: replace strFind with startsWith if appropriate
@@ -2255,6 +2775,8 @@ void explode(const std::string &link, bool sslibev, bool ssrlibev, const std::st
         explodeVLESS(link, custom_port, node);
     else if(strFind(link, "hysteria2://") || strFind(link, "hy2://"))
         explodeHysteria2(link, custom_port, node);
+    else if(strFind(link, "tuic://"))
+        explodeTUIC(link, custom_port, node);
     else if(strFind(link, "anytls://"))
         explodeAnyTLS(link, custom_port, node);
     else if(strFind(link, "ss://"))

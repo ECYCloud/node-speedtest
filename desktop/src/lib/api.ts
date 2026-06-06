@@ -34,17 +34,17 @@ async function apiPostFile<T>(
 }
 
 /** 后端在某些状态下会返回 "running" / "error" 这类纯文本而非 JSON,
-    这里集中识别并抛出语义清晰的错误,避免污染上层 store 的数据状态。 */
+    这里集中识别并抛出语义清晰的错误，避免污染上层 store 的数据状态。 */
 function safeJson<T>(path: string, text: string): T {
   const trimmed = text.trim();
   if (trimmed === "running") {
-    throw new Error("后端正在测速中,请等当前任务结束");
+    throw new Error("后端正在测速中，请等当前任务结束");
   }
   if (trimmed === "error") {
     throw new Error("后端无法识别该配置文件");
   }
   if (trimmed === "done") {
-    throw new Error("上次测速刚刚结束,请稍候再试");
+    throw new Error("上次测速刚刚结束，请稍候再试");
   }
   try {
     return JSON.parse(trimmed) as T;
@@ -85,7 +85,7 @@ export interface NodeResult {
   gPingLoss: number;
   geoIP: { inbound: GeoBlock; outbound: GeoBlock };
   dspeed: number;
-  /** 最高瞬时速度,字节/秒;后端 webgui_wrapper.json_write_node 写入。 */
+  /** 最高瞬时速度，字节/秒;后端 webgui_wrapper.json_write_node 写入。 */
   dspeedMax: number;
   trafficUsed: number;
 }
@@ -101,13 +101,11 @@ export interface StartParams {
   testMode: "ALL" | "TCP_PING";
   sortMethod: string;
   group: string;
-  colors: string;
 }
 
 export const api = {
   version: () => apiGet<VersionInfo>("/getversion"),
   status: () => apiGet<string>("/status", false),
-  colors: () => apiGet<unknown>("/getcolors"),
   readSubscription: (url: string) =>
     apiPostJson<NodeConfig[]>("/readsubscriptions", { url }),
   readFileConfig: (fileName: string, fileBytes: number[]) =>

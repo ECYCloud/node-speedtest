@@ -39,7 +39,7 @@ extern std::string g_test_start_time, g_test_tz_label;
 // Forward decls of helpers defined in renderer.cpp itself:
 bool comparer(nodeInfo &a, nodeInfo &b);
 void getSpeedColor(std::string speed, color *finalcolor);
-void loadDefaultColor(std::string type);
+void loadDefaultColor();
 void rendererInit(const std::string &font, int fontsize);
 std::string secondToString(int duration);
 
@@ -91,6 +91,12 @@ std::string protoLabel(int linkType)
     case SPEEDTEST_MESSAGE_FOUNDTROJAN:  return "Trojan";
     case SPEEDTEST_MESSAGE_FOUNDHY2:     return "Hysteria2";
     case SPEEDTEST_MESSAGE_FOUNDANYTLS:  return "AnyTLS";
+    case SPEEDTEST_MESSAGE_FOUNDTUIC:    return "TUIC";
+    case SPEEDTEST_MESSAGE_FOUNDHYSTERIA: return "Hysteria";
+    case SPEEDTEST_MESSAGE_FOUNDWIREGUARD: return "WireGuard";
+    case SPEEDTEST_MESSAGE_FOUNDSSH:     return "SSH";
+    case SPEEDTEST_MESSAGE_FOUNDMIERU:   return "Mieru";
+    case SPEEDTEST_MESSAGE_FOUNDSHADOWTLS: return "ShadowTLS";
     case SPEEDTEST_MESSAGE_FOUNDSOCKS:   return "Socks5";
     case SPEEDTEST_MESSAGE_FOUNDHTTP:    return "HTTP";
     case SPEEDTEST_MESSAGE_FOUNDSNELL:   return "Snell";
@@ -123,19 +129,36 @@ std::string formatPing(const std::string &p)
 
 std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
                          bool export_with_maxSpeed, std::string export_sort_method,
-                         std::string export_color_style, bool export_as_new_style,
-                         bool export_nat_type)
+                         bool export_as_new_style, bool export_nat_type)
 {
     (void)export_as_new_style; (void)export_nat_type; // legacy flags, ignored
     std::string pngname = replace_all_distinct(resultpath, ".log", ".png");
-    loadDefaultColor(export_color_style);
+    // PNGwriter 内部用窄字符 fopen 写文件，含中文的目标名在 Windows 上会乱码。
+    // 对策:若目标名含非 ASCII 字节，先渲染到同目录的 ASCII 临时名，close 后再用
+    // fileRenameUtf8(MoveFileW)重命名为真实目标名。纯 ASCII 名则直接写。
+    std::string render_path = pngname;
+    bool png_need_rename = false;
+    for(unsigned char c : pngname)
+        if(c >= 0x80) { png_need_rename = true; break; }
+    if(png_need_rename)
+    {
+        // 临时名 = 目标名里非 ASCII 字节替换为 '_'，保证纯 ASCII 且与目标同目录
+        // (同盘重命名，原子且快)。close 后用 fileRenameUtf8 改回中文目标名。
+        render_path.clear();
+        render_path.reserve(pngname.size());
+        for(char c : pngname)
+            render_path += (static_cast<unsigned char>(c) >= 0x80) ? '_' : c;
+    }
+    loadDefaultColor();
 
     export_sort_method_render = export_sort_method;
     if(export_sort_method != "none")
         std::sort(nodes.begin(), nodes.end(), comparer);
 
     const int S = image_scale > 0 ? image_scale : 1;
-    const std::string font = "tools" PATH_SLASH "misc" PATH_SLASH "WenQuanYiMicroHei-01.ttf";
+    // 思源黑体覆盖 GB18030 全字集(生僻字/繁体/日韩假名/符号)，取代字符集偏窄的
+    // 文泉驿微米黑 —— 后者缺字时会把节点名/分组名渲染成空白方块。两份字体随包分发。
+    const std::string font = "tools" PATH_SLASH "misc" PATH_SLASH "SourceHanSansCN-Medium.otf";
     const int fs        = 13 * S;   // data / header text
     const int fs_title  = 16 * S;   // title text
     const int fs_foot   = 11 * S;   // footer text
@@ -217,7 +240,7 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
                      + foot_h * 5 + 10 * S; // 多预留一行给"测试机:..."
 
     // -------- create PNG canvas --------
-    pngwriter png(total_width, total_height, 1.0, pngname.data());
+    pngwriter png(total_width, total_height, 1.0, render_path.data());
     png.filledsquare(0, 0, total_width, total_height, 1.0, 1.0, 1.0);
     rendererInit(font, fs);
 
@@ -405,7 +428,7 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
              10 * S, 0.45, 0.45, 0.45);
     yt += foot_h;
 
-    // 测试机出口位置 + 运营商:四个字段拼成中文地址,任一非空就渲染该行。
+    // 测试机出口位置 + 运营商:四个字段拼成中文地址，任一非空就渲染该行。
     {
         std::string parts;
         auto join = [&](const std::string &s){
@@ -435,8 +458,8 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     footLine(meta, 10 * S, 0.45, 0.45, 0.45);
     yt += foot_h;
 
-    // 测试时间(开始时间)+ 时区,而不是图片生成的瞬时。
-    // 没填时回退到当前时间,确保独立预览程序也有值。
+    // 测试时间(开始时间)+ 时区，而不是图片生成的瞬时。
+    // 没填时回退到当前时间，确保独立预览程序也有值。
     std::string when = g_test_start_time.empty() ? getTime(3) : g_test_start_time;
     if(!g_test_tz_label.empty())
         when += " " + g_test_tz_label;
@@ -453,5 +476,8 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     png.line(total_width - 1, 0, total_width - 1, total_height - 1, 0.80, 0.80, 0.80);
 
     png.close();
+    // 渲染到 ASCII 临时名的，close 后重命名为真实(含中文)目标名
+    if(png_need_rename)
+        fileRenameUtf8(render_path, pngname);
     return pngname;
 }

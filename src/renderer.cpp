@@ -41,10 +41,6 @@ std::vector<int> bounds;
 int widNumber = 0, widNA = 0, widB = 0, widKB = 0, widMB = 0, widGB = 0, widPercent = 0, widDot = 0;
 int widUnkn = 0, widBlock = 0, widFullCone = 0, widRestCone = 0, widPortRest = 0, widSym = 0;
 
-//original color
-const int def_colorgroup[5][3] = {{65535, 65535, 65535}, {32768, 65535, 0}, {65535, 65535, 0}, {65535, 32768, 49152}, {65535, 0, 0}};
-const int def_bounds[5] = {0, 64 * 1024, 512 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024};
-
 //rainbow color
 const int rainbow_colorgroup[8][3] = {{65535, 65535, 65535}, {26112, 65535, 26112}, {65535, 65535, 26112}, {65535, 45568, 26112}, {65535, 26112, 26112}, {57856, 35840, 65535}, {26112, 52224, 65535}, {26112, 26112, 65535}};
 const int rainbow_bounds[8] = {0, 64 * 1024, 512 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 24 * 1024 * 1024, 32 * 1024 * 1024, 40 * 1024 * 1024};
@@ -279,27 +275,15 @@ void getSpeedColor(std::string speed, color *finalcolor)
     return;
 }
 
-void loadDefaultColor(std::string type)
+// 结果图速度配色固定为彩虹(rainbow)。原 original/custom 配色选项已移除。
+void loadDefaultColor()
 {
-    if(type == "rainbow")
+    eraseElements(colorgroup);
+    eraseElements(bounds);
+    for(int i = 0; i < 8; i++)
     {
-        eraseElements(colorgroup);
-        eraseElements(bounds);
-        for(int i = 0; i < 8; i++)
-        {
-            colorgroup.push_back(arrayToColor(rainbow_colorgroup[i]));
-            bounds.push_back(rainbow_bounds[i]);
-        }
-    }
-    else if(type == "original")
-    {
-        eraseElements(colorgroup);
-        eraseElements(bounds);
-        for(int i = 0; i < 5; i++)
-        {
-            colorgroup.push_back(arrayToColor(def_colorgroup[i]));
-            bounds.push_back(def_bounds[i]);
-        }
+        colorgroup.push_back(arrayToColor(rainbow_colorgroup[i]));
+        bounds.push_back(rainbow_bounds[i]);
     }
 }
 

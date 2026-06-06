@@ -378,6 +378,15 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
         {
             last_bytes = this_bytes;
         }
+        // 实时更新已下载量/平均/最高速度，供 web 模式轮询 /getresults 时展示实时进度。
+        // 否则这些字段要等下载循环全部结束才一次性赋值，前端实时速度列只能显示 "--"。
+        {
+            auto now = steady_clock::now();
+            int elapsed = (int)duration_cast<milliseconds>(now - start).count() + 1;
+            node.totalRecvBytes = cur_recv_bytes;
+            node.avgSpeed = speedCalc(cur_recv_bytes * 1000.0 / elapsed);
+            node.maxSpeed = speedCalc(max_speed);
+        }
         running = still_running;
         writeLog(LOG_TYPE_FILEDL, "Running threads: " + std::to_string(running) + ", total received bytes: " + std::to_string(transferred_bytes) \
                  + ", current received bytes: " + std::to_string(this_bytes) + ".");

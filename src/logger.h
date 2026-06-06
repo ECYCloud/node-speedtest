@@ -37,7 +37,7 @@ int makeDir(const char *path);
 std::string getTime(int type);
 void logInit(bool rpcmode);
 // 初始化测试结果文件路径(results/<safe_group>-<time>.log)。
-// group_name 留空时只用时间戳,保留旧行为。
+// group_name 留空时只用时间戳，保留旧行为。
 void resultInit(const std::string &group_name = "");
 void writeLog(int type, std::string content, int level = LOG_LEVEL_VERBOSE);
 void logEOF();

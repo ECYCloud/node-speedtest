@@ -14,7 +14,7 @@ jobs:
     name: Ubuntu 24.04 / amd64 / cmake
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build deps
         run: |
@@ -50,7 +50,7 @@ jobs:
 
       - name: Upload binary
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: stairspeedtest-linux-amd64
           path: |
@@ -66,7 +66,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -124,7 +124,7 @@ jobs:
 
       - name: Upload binary
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: stairspeedtest-windows-amd64
           path: stage/
@@ -135,7 +135,7 @@ jobs:
     name: macOS / arm64 / Homebrew clang
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build deps (Homebrew)
         run: |
@@ -177,7 +177,7 @@ jobs:
 
       - name: Upload binary
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: stairspeedtest-macos-arm64
           path: build/stairspeedtest

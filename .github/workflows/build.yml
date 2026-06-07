@@ -16,7 +16,7 @@ jobs:
     name: Linux x86 Build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Add commit id into version
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       run: SHA=$(git rev-parse --short HEAD) && sed -i 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h
@@ -24,7 +24,7 @@ jobs:
       run: |
         docker run -v $GITHUB_WORKSPACE:/root/workdir -e TRAVIS_BRANCH=action -e TRAVIS_TAG=action multiarch/alpine:x86-latest-stable /bin/sh -c "apk add bash git && cd /root/workdir && bash scripts/build.alpine.release.sh"
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: stairspeedtest_reborn_linux32
         path: stairspeedtest/
@@ -42,7 +42,7 @@ jobs:
     name: Linux x86_64 Build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Add commit id into version
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       run: SHA=$(git rev-parse --short HEAD) && sed -i 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h
@@ -50,7 +50,7 @@ jobs:
       run: |
         docker run -v $GITHUB_WORKSPACE:/root/workdir -e TRAVIS_BRANCH=action -e TRAVIS_TAG=action multiarch/alpine:amd64-latest-stable /bin/sh -c "apk add bash git && cd /root/workdir && bash scripts/build.alpine.release.sh"
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: stairspeedtest_reborn_linux64
         path: stairspeedtest/
@@ -68,7 +68,7 @@ jobs:
     name: macOS Build
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Add commit id into version
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       run: SHA=$(git rev-parse --short HEAD) && sed -i -e 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h
@@ -78,7 +78,7 @@ jobs:
         bash scripts/build.macos.clients.sh
         mv base stairspeedtest
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: stairspeedtest_reborn_darwin64
         path: stairspeedtest/
@@ -99,7 +99,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: msys2/setup-msys2@v2
       with:
         update: true
@@ -136,7 +136,7 @@ jobs:
         mv $USERPROFILE/clients/built base/tools/clients
         mv base stairspeedtest
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: stairspeedtest_reborn_win64
         path: stairspeedtest/
@@ -157,7 +157,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: msys2/setup-msys2@v2
       with:
         update: true
@@ -195,7 +195,7 @@ jobs:
         mv $USERPROFILE/clients/built base/tools/clients
         mv base stairspeedtest
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: stairspeedtest_reborn_win32
         path: stairspeedtest/

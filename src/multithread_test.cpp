@@ -1,6 +1,7 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <vector>
 #include <iostream>
 #include <mutex>
 #include <atomic>
@@ -348,7 +349,7 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
     int running;
     thread_args args = {host, port, uri, localaddr, localport, username, password, useTLS};
     //std::thread threads[thread_count];
-    pthread_t threads[thread_count];
+    std::vector<pthread_t> threads(thread_count);
     launched = 0;
     for(i = 0; i != thread_count; i++)
     {

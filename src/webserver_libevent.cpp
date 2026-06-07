@@ -345,8 +345,8 @@ int start_web_server_multi(void *argv)
     if (nfd < 0)
         return -1;
 
-    pthread_t ths[nthreads];
-    struct event_base *base[nthreads];
+    std::vector<pthread_t> ths(nthreads);
+    std::vector<struct event_base *> base(nthreads);
     for (i = 0; i < nthreads; i++)
     {
         base[i] = event_init();

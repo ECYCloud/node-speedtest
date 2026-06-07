@@ -71,9 +71,14 @@ bool renderCOLR(FT_Face face, FT_UInt base, std::vector<float> &rgba,
             FT_GlyphSlot g = face->glyph;
             int l=g->bitmap_left, t=g->bitmap_top;
             int w=(int)g->bitmap.width, h=(int)g->bitmap.rows;
-            if(w>0&&h>0){ any=true;
-                if(l<xmin)xmin=l; if(t>ymax)ymax=t;
-                if(l+w>xmax)xmax=l+w; if(t-h<ymin)ymin=t-h; }
+            if(w>0&&h>0)
+            {
+                any=true;
+                if(l<xmin)xmin=l;
+                if(t>ymax)ymax=t;
+                if(l+w>xmax)xmax=l+w;
+                if(t-h<ymin)ymin=t-h;
+            }
         }
         more = FT_Get_Color_Glyph_Layer(face, base, &lg, &ci, &it);
     }

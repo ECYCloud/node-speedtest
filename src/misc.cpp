@@ -848,13 +848,13 @@ std::string speedCalc(double speed)
     char str[10];
     std::string retstr;
     if(speed >= 1073741824.0)
-        sprintf(str, "%.2fGB", speed / 1073741824.0);
+        snprintf(str, sizeof(str), "%.2fGB", speed / 1073741824.0);
     else if(speed >= 1048576.0)
-        sprintf(str, "%.2fMB", speed / 1048576.0);
+        snprintf(str, sizeof(str), "%.2fMB", speed / 1048576.0);
     else if(speed >= 1024.0)
-        sprintf(str, "%.2fKB", speed / 1024.0);
+        snprintf(str, sizeof(str), "%.2fKB", speed / 1024.0);
     else
-        sprintf(str, "%.2fB", speed);
+        snprintf(str, sizeof(str), "%.2fB", speed);
     retstr = str;
     return retstr;
 }

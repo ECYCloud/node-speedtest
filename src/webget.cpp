@@ -58,9 +58,9 @@ static int dummy_writer(char *data, size_t size, size_t nmemb, void *writerData)
     return size * nmemb;
 }
 
-static int size_checker(void *clientp, double dltotal, double dlnow, double ultotal, double ulnow)
+static int size_checker(void *clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
 {
-    if(dltotal > 1048576.0)
+    if(dltotal > 1048576)
         return 1;
     return 0;
 }
@@ -79,7 +79,7 @@ static inline void curl_set_common_options(CURL *curl_handle, const char *url, l
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, user_agent_str.data());
     if(max_file_size)
         curl_easy_setopt(curl_handle, CURLOPT_MAXFILESIZE, max_file_size);
-    curl_easy_setopt(curl_handle, CURLOPT_PROGRESSFUNCTION, size_checker);
+    curl_easy_setopt(curl_handle, CURLOPT_XFERINFOFUNCTION, size_checker);
 }
 
 //static std::string curlGet(const std::string &url, const std::string &proxy, std::string &response_headers, CURLcode &return_code, const string_map &request_headers)

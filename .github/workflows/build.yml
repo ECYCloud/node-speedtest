@@ -38,6 +38,7 @@ jobs:
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-linux-amd64-$MV.gz"
           gunzip "mihomo-linux-amd64-$MV.gz"
+          mkdir -p base/tools/clients
           install -m 0755 "mihomo-linux-amd64-$MV" base/tools/clients/mihomo
 
       - name: Package
@@ -123,7 +124,8 @@ jobs:
         run: |
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-windows-amd64-$MV.zip"
-          unzip -o "mihomo-windows-amd64-$MV.zip" -d mihomo_tmp
+          7z x "mihomo-windows-amd64-$MV.zip" -omihomo_tmp
+          mkdir -p dist/tools/clients
           cp mihomo_tmp/mihomo-windows-amd64*.exe dist/tools/clients/mihomo.exe
 
       - name: Package
@@ -198,6 +200,7 @@ jobs:
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-darwin-arm64-$MV.gz"
           gunzip "mihomo-darwin-arm64-$MV.gz"
+          mkdir -p dist/tools/clients
           install -m 0755 "mihomo-darwin-arm64-$MV" dist/tools/clients/mihomo
 
       - name: Package

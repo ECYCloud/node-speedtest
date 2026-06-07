@@ -2,9 +2,10 @@
 set -xe
 
 apk add gcc g++ build-base linux-headers cmake make autoconf automake libtool git
-apk add libpng-dev libpng-static openssl-dev openssl-libs-static curl-dev curl-static nghttp2-static freetype-dev freetype-static zlib-dev zlib-static rapidjson-dev libevent-dev libevent-static bzip2-static pcre2-dev brotli-static
+apk add libpng-dev libpng-static openssl-dev openssl-libs-static curl-dev curl-static nghttp2-static freetype-dev freetype-static zlib-dev zlib-static rapidjson-dev libevent-dev libevent-static bzip2-static pcre2-dev pcre2-static brotli-static
 # harfbuzz (+ its static deps) is required since the colour-emoji renderer was added.
-apk add harfbuzz-dev harfbuzz-static graphite2-static glib-static
+# gettext-static provides libintl that glib-static needs on musl.
+apk add harfbuzz-dev harfbuzz-static graphite2-static glib-static gettext-static
 
 git clone https://github.com/jbeder/yaml-cpp --depth=1
 cd yaml-cpp

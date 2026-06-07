@@ -154,4 +154,155 @@ const logoPath = resolve(logoDir, "logo.png");
 writeFileSync(logoPath, logoBuf);
 console.log(`✓ src/assets/logo.png  (${logoSize}x${logoSize}, ${logoBuf.length} bytes)`);
 
+// ---------- 4. 生成 NSIS 安装向导顶部 header.bmp(高分辨率 24-bit BMP,白底)----------
+// NSIS Modern UI 2 的 header 图控件在 96 DPI 下逻辑尺寸为 150×57,但安装器是
+// DPI-aware 的:在 125%/150%/200% 缩放下控件物理像素会同比放大(最大到 300×114)。
+// MUI2 默认 BITMAP_STRETCH=FitControl,内部走 GDI StretchBlt 把 BMP 拉伸到控件大小,
+// 拉伸用的是最近邻/COLORONCOLOR,放大时极易糊;只有"原图比控件大、做缩小"才清晰。
+// 所以这里直接出 4× = 600×228 的高分辨率 BMP,即使 200% DPI 也是缩小采样,锐利度
+// 远好于 150×57。本项目通过 installer-hooks.nsh 的 MUI_HEADERIMAGE_RIGHT 把整张
+// BMP 移到 header 右侧,所以图标在画布内右对齐、垂直居中即可。
+// BMP 24-bit 不支持透明,这里把图标 alpha 合成到白底再写出。
+writeHeaderBmp();
+
 console.log("\n✓ 全部图标已重新生成,接下来运行 npm run tauri build");
+
+function writeHeaderBmp() {
+  // 4× 高分辨率画布。逻辑尺寸仍是 NSIS 推荐的 150×57,SCALE 提升只影响实际像素密度,
+  // 不破坏 MUI2 的 FitControl 拉伸契约(NSIS 只看像素尺寸,不看 DPI 字段)。
+  const SCALE = 4;
+  const W = 150 * SCALE, H = 57 * SCALE;
+  // 图标在 96 DPI 下视觉占 36px(约 header 高度 60%),按 SCALE 放大到 144px。
+  // 右边距同样 14px × SCALE = 56px,保持与 Clash Verge Rev 一致的小角标观感。
+  const iconSize = 36 * SCALE;
+  const marginRight = 14 * SCALE;
+
+  // 用原始 PNG(1254×1254 高质量位图)+ Lanczos3 缩放 → 144×144,
+  // 比 SVG 矢量、比 boxFilter 都更锐利。预乘 alpha 处理避免边缘伪色,
+  // 最后叠白底输出 24-bit BMP。
+  if (!srcPng) {
+    throw new Error("writeHeaderBmp 需要 PNG 源(icon-source.png),当前未加载");
+  }
+  const iconRgba = lanczos3Resize(srcPng, iconSize, iconSize);
+
+  // W×H 白底画布(RGBA),把图标 alpha 合成到右侧、垂直居中
+  const canvas = Buffer.alloc(W * H * 4, 0xff);
+  const offX = W - iconSize - marginRight;
+  const offY = Math.floor((H - iconSize) / 2);
+  for (let y = 0; y < iconSize; y++) {
+    for (let x = 0; x < iconSize; x++) {
+      const si = (y * iconSize + x) * 4;
+      const a = iconRgba[si + 3] / 255;
+      const di = ((offY + y) * W + (offX + x)) * 4;
+      canvas[di]     = Math.round(iconRgba[si]     * a + 255 * (1 - a));
+      canvas[di + 1] = Math.round(iconRgba[si + 1] * a + 255 * (1 - a));
+      canvas[di + 2] = Math.round(iconRgba[si + 2] * a + 255 * (1 - a));
+      canvas[di + 3] = 255;
+    }
+  }
+
+  // 编码为 24-bit BMP(BGR,行自下而上,每行 padding 到 4 字节倍数)
+  const rowBytes = W * 3;
+  const rowPadded = (rowBytes + 3) & ~3;
+  const padding = rowPadded - rowBytes;
+  const pixelDataSize = rowPadded * H;
+  const fileSize = 54 + pixelDataSize;
+  const bmp = Buffer.alloc(fileSize);
+
+  // BITMAPFILEHEADER
+  bmp.write("BM", 0, "ascii");
+  bmp.writeUInt32LE(fileSize, 2);
+  bmp.writeUInt32LE(0, 6);
+  bmp.writeUInt32LE(54, 10);
+  // BITMAPINFOHEADER
+  bmp.writeUInt32LE(40, 14);
+  bmp.writeInt32LE(W, 18);
+  bmp.writeInt32LE(H, 22);
+  bmp.writeUInt16LE(1, 26);
+  bmp.writeUInt16LE(24, 28);
+  bmp.writeUInt32LE(0, 30);          // BI_RGB
+  bmp.writeUInt32LE(pixelDataSize, 34);
+  // 物理 DPI = 72 × SCALE,与像素密度一致;NSIS 不读这字段,这里只是元数据正确性
+  const dpi = Math.round(2835 * SCALE);
+  bmp.writeUInt32LE(dpi, 38);
+  bmp.writeUInt32LE(dpi, 42);
+  bmp.writeUInt32LE(0, 46);
+  bmp.writeUInt32LE(0, 50);
+  // 像素数据(自下而上)
+  let p = 54;
+  for (let y = H - 1; y >= 0; y--) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      bmp[p++] = canvas[i + 2]; // B
+      bmp[p++] = canvas[i + 1]; // G
+      bmp[p++] = canvas[i];     // R
+    }
+    for (let k = 0; k < padding; k++) bmp[p++] = 0;
+  }
+
+  writeFileSync(resolve(iconsDir, "header.bmp"), bmp);
+  console.log(`✓ header.bmp        (${W}x${H} @${SCALE}x, 24-bit, ${bmp.length} bytes)`);
+}
+
+
+/**
+ * Lanczos3 高质量缩放(为 header.bmp 用,比 boxFilter 锐利得多)。
+ * 输入: pngjs 解码后的 RGBA 源({width, height, data});输出: RGBA Buffer。
+ * 预乘 alpha 处理,避免缩放时边缘出现伪色;最后再反预乘还原 straight alpha。
+ * 缩到 56×56 这个尺寸,从 1000+ 像素源开始也能快速跑完(单次 < 1s)。
+ */
+function lanczos3Resize(src, dstW, dstH) {
+  const a = 3;
+  const sx = src.width / dstW;
+  const sy = src.height / dstH;
+  // 缩小时滤波核要按缩放比拉伸,否则会产生锯齿
+  const fx = Math.max(1, sx);
+  const fy = Math.max(1, sy);
+  const rx = Math.ceil(a * fx);
+  const ry = Math.ceil(a * fy);
+
+  const sinc = (x) => (x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x));
+  const L = (x) => (Math.abs(x) >= a ? 0 : sinc(x) * sinc(x / a));
+
+  const dst = Buffer.alloc(dstW * dstH * 4);
+  for (let y = 0; y < dstH; y++) {
+    const cy = (y + 0.5) * sy - 0.5;
+    const y0 = Math.max(0, Math.floor(cy - ry + 1));
+    const y1 = Math.min(src.height - 1, Math.floor(cy + ry));
+    for (let x = 0; x < dstW; x++) {
+      const cx = (x + 0.5) * sx - 0.5;
+      const x0 = Math.max(0, Math.floor(cx - rx + 1));
+      const x1 = Math.min(src.width - 1, Math.floor(cx + rx));
+      let r = 0, g = 0, b = 0, alpha = 0, w = 0;
+      for (let yy = y0; yy <= y1; yy++) {
+        const wy = L((yy - cy) / fy);
+        if (wy === 0) continue;
+        for (let xx = x0; xx <= x1; xx++) {
+          const wx = L((xx - cx) / fx);
+          const ww = wx * wy;
+          if (ww === 0) continue;
+          const i = (yy * src.width + xx) * 4;
+          const sa = src.data[i + 3] / 255;       // 预乘
+          r += src.data[i]     * sa * ww;
+          g += src.data[i + 1] * sa * ww;
+          b += src.data[i + 2] * sa * ww;
+          alpha += src.data[i + 3] * ww;
+          w += ww;
+        }
+      }
+      const di = (y * dstW + x) * 4;
+      const aOut = w > 0 ? alpha / w : 0;
+      dst[di + 3] = Math.round(Math.max(0, Math.min(255, aOut)));
+      if (aOut > 0 && w > 0) {
+        // 反预乘还原 straight alpha
+        const inv = 255 / aOut;
+        dst[di]     = Math.round(Math.max(0, Math.min(255, (r / w) * inv)));
+        dst[di + 1] = Math.round(Math.max(0, Math.min(255, (g / w) * inv)));
+        dst[di + 2] = Math.round(Math.max(0, Math.min(255, (b / w) * inv)));
+      } else {
+        dst[di] = dst[di + 1] = dst[di + 2] = 0;
+      }
+    }
+  }
+  return dst;
+}

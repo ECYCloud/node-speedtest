@@ -7,11 +7,20 @@ export default function ResultsPanel() {
   const { results, current, status } = useTest();
   const running = status === "running";
 
-  // 当前正在测试的节点的实时进度:gPing 是 HTTPS 延迟(秒),dspeed 是平均速度(字节/秒)。
-  // 后端测速期间会持续更新 dspeed，所以这里直接复用同一份 NodeResult 形状。
+  // 当前正在测试的节点的实时进度:gPing 是 HTTPS 延迟(秒)。
+  // 实时速度从 rawSocketSpeed 取最近一个非零采样点（后端每 0.5s 写一格，
+  // 折算为字节/秒的瞬时速度）；dspeed 是从开始到此刻的累计平均，慢启动期会被拉低，
+  // 不适合当"实时"展示。
   const cur = current && current.remarks ? current : null;
   const curPing = cur?.gPing ?? 0;
-  const curSpeed = cur?.dspeed ?? 0;
+  const rawSpeeds = cur?.rawSocketSpeed ?? [];
+  let curSpeed = 0;
+  for (let i = rawSpeeds.length - 1; i >= 0; i--) {
+    if (rawSpeeds[i] > 0) {
+      curSpeed = rawSpeeds[i];
+      break;
+    }
+  }
 
   return (
     <Card className="p-5 flex flex-col">

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <atomic>
 #include <queue>
+#include <algorithm>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -335,6 +336,9 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
     urlParse(testfile, host, uri, port, useTLS);
     received_bytes = 0;
     EXIT_FLAG = false;
+    // 清零上一节点遗留的瞬时速度采样点。否则若本节点中途异常退出，
+    // rawSpeed 末尾会保留前一节点的高值，前端"实时速度"会读到陈旧数据。
+    std::fill(std::begin(node.rawSpeed), std::end(node.rawSpeed), 0ULL);
 
     if(useTLS)
     {
@@ -362,7 +366,7 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
 
     writeLog(LOG_TYPE_FILEDL, "All threads launched. Start accumulating data.");
     auto start = steady_clock::now();
-    unsigned long long transferred_bytes = 0, last_bytes = 0, this_bytes = 0, cur_recv_bytes = 0, max_speed = 0;
+    unsigned long long transferred_bytes = 0, this_bytes = 0, cur_recv_bytes = 0, max_speed = 0;
     for(i = 1; i < 21; i++)
     {
         sleep(500); //accumulate data
@@ -371,14 +375,10 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
         transferred_bytes = cur_recv_bytes;
 
         node.rawSpeed[i - 1] = this_bytes;
-        if(i % 2 == 0)
-        {
-            max_speed = std::max(max_speed, (this_bytes + last_bytes) / 2); //pick 2 speed point and get average before calculating max speed
-        }
-        else
-        {
-            last_bytes = this_bytes;
-        }
+        // 最高速度 = 所有 0.5s 瞬时采样点中的最大值。
+        // 与前端"实时速度"读取的 rawSpeed 完全同源，保证 maxSpeed ≥ 任意实时值。
+        // 旧实现取相邻两点平均再求最大，会让"最高"反而 < "实时峰值"，语义矛盾。
+        max_speed = std::max(max_speed, this_bytes);
         // 实时更新已下载量/平均/最高速度，供 web 模式轮询 /getresults 时展示实时进度。
         // 否则这些字段要等下载循环全部结束才一次性赋值，前端实时速度列只能显示 "--"。
         {

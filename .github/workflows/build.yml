@@ -24,7 +24,7 @@ jobs:
       run: |
         docker run -v $GITHUB_WORKSPACE:/root/workdir -e TRAVIS_BRANCH=action -e TRAVIS_TAG=action multiarch/alpine:x86-latest-stable /bin/sh -c "apk add bash git && cd /root/workdir && bash scripts/build.alpine.release.sh"
     - name: Upload
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: stairspeedtest_reborn_linux32
         path: stairspeedtest/
@@ -50,7 +50,7 @@ jobs:
       run: |
         docker run -v $GITHUB_WORKSPACE:/root/workdir -e TRAVIS_BRANCH=action -e TRAVIS_TAG=action multiarch/alpine:amd64-latest-stable /bin/sh -c "apk add bash git && cd /root/workdir && bash scripts/build.alpine.release.sh"
     - name: Upload
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: stairspeedtest_reborn_linux64
         path: stairspeedtest/
@@ -78,7 +78,7 @@ jobs:
         bash scripts/build.macos.clients.sh
         mv base stairspeedtest
     - name: Upload
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: stairspeedtest_reborn_darwin64
         path: stairspeedtest/
@@ -136,7 +136,7 @@ jobs:
         mv $USERPROFILE/clients/built base/tools/clients
         mv base stairspeedtest
     - name: Upload
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: stairspeedtest_reborn_win64
         path: stairspeedtest/
@@ -195,7 +195,7 @@ jobs:
         mv $USERPROFILE/clients/built base/tools/clients
         mv base stairspeedtest
     - name: Upload
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: stairspeedtest_reborn_win32
         path: stairspeedtest/

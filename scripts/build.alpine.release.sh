@@ -2,7 +2,7 @@
 set -xe
 
 apk add gcc g++ build-base linux-headers cmake make autoconf automake libtool git
-apk add libpng-dev libpng-static openssl-dev openssl-libs-static zlib-dev zlib-static rapidjson-dev libevent-dev libevent-static bzip2-static pcre2-dev pcre2-static brotli-static
+apk add libpng-dev libpng-static openssl-dev openssl-libs-static zlib-dev zlib-static rapidjson-dev libevent-dev libevent-static bzip2-static pcre2-dev pcre2-static brotli-static freetype-dev freetype-static
 # harfbuzz (+ its static deps) is required since the colour-emoji renderer was added.
 # gettext-static provides libintl that glib-static needs on musl.
 apk add harfbuzz-dev harfbuzz-static graphite2-static glib-static gettext-static

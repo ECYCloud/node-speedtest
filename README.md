@@ -6,7 +6,7 @@
 [![GitHub license](https://img.shields.io/github/license/ECYCloud/stairspeedtest-reborn-mihomo.svg)](https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/blob/master/LICENSE)
 
 ## 简介
-本项目是原始 [阶梯测速](https://github.com/ECYCloud/stairspeedtest-reborn-mihomo) 脚本的 C++ 重写版本。相比脚本版本,本项目具有更快的节点解析速度、更精美的结果图片渲染,以及完整的跨平台支持。代理后端已统一集成到单一的内置 [mihomo (Clash.Meta)](https://github.com/MetaCubeX/mihomo) 内核中,因此每种支持的协议都由一个二进制文件驱动,而非一堆分散的协议客户端。
+本项目是原始 [阶梯测速](https://github.com/tindy2013/stairspeedtest-reborn) 脚本的 C++ 重写版本。相比脚本版本,本项目具有更快的节点解析速度、更精美的结果图片渲染,以及完整的跨平台支持。代理后端已统一集成到单一的内置 [mihomo (Clash.Meta)](https://github.com/MetaCubeX/mihomo) 内核中,因此每种支持的协议都由一个二进制文件驱动,而非一堆分散的协议客户端。
 
 ## 特别感谢
 * [@NyanChanMeow](https://github.com/nyanchanmeow) - [SSRSpeed](https://github.com/tindy2013/stairspeedtest-reborn) 原始脚本的作者

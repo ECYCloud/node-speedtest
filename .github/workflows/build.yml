@@ -75,7 +75,7 @@ jobs:
           msystem: MINGW64
           update: true
           install: >-
-            base-devel git
+            base-devel git unzip zip
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-pkgconf
@@ -124,14 +124,14 @@ jobs:
         run: |
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-windows-amd64-$MV.zip"
-          7z x "mihomo-windows-amd64-$MV.zip" -omihomo_tmp
+          unzip -o "mihomo-windows-amd64-$MV.zip" -d mihomo_tmp
           mkdir -p dist/tools/clients
           cp mihomo_tmp/mihomo-windows-amd64*.exe dist/tools/clients/mihomo.exe
 
       - name: Package
         run: |
           mv dist stairspeedtest
-          7z a -tzip stairspeedtest_reborn_win64.zip stairspeedtest
+          zip -r stairspeedtest_reborn_win64.zip stairspeedtest
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

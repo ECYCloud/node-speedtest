@@ -28,7 +28,7 @@ const RECOMMENDS: Recommend[] = [
     tags: ["VLESS", "Hysteria2", "AnyTLS", "Trojan"],
     highlights: [
       { icon: Zap, text: "高带宽专线，适合 4K 流媒体" },
-      { icon: ShieldCheck, text: "TLS 1.3 + Reality 抗审查" },
+      { icon: ShieldCheck, text: "TLS 抗审查节点" },
       { icon: Globe2, text: "覆盖 8 个地区 40+ 节点" },
     ],
   },

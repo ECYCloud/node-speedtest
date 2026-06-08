@@ -29,3 +29,16 @@ tokio = { version = "1", features = ["time", "rt"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
+# Release 体积优化:Tauri 主进程不是性能热点(主要工作交给 sidecar 后端),
+# 用最激进的体积裁剪即可。预期 stair-speedtest.exe 从 ~14MB 降到 ~4MB。
+#  - opt-level="z"     最小化代码大小(比 "s" 更激进,关闭 loop 向量化)
+#  - lto="fat"         跨 crate 全程序 LTO,删除全部死代码
+#  - codegen-units=1   单单元编译,LTO 才能充分内联/裁剪
+#  - strip=true        去掉调试符号(Tauri release 不需要 PDB 解析)
+#  - panic="abort"     panic 直接 abort,省掉 unwinding 表
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

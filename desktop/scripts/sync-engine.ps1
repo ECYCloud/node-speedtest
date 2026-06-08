@@ -3,8 +3,13 @@
 # 用途:把 stairspeedtest-mihomo-win64 内的可执行文件、DLL、mihomo 内核与
 #       配置同步到 desktop/src-tauri/engine/,供 Tauri 在 dev 与打包时使用。
 #
-# 已剥离:webui/(旧浏览器 SPA,后续单独重构)、webgui.bat / webserver.bat
-#         (浏览器/CLI 启动脚本)、logs/、results/、cache.db、*.bak
+# 已剥离:
+#   - webui/                       旧浏览器 SPA,Tauri 已完全取代
+#   - tools/gui/                   旧浏览器 SPA 的 favicon/index.html
+#   - tools/misc/WenQuanYiMicroHei-01.ttf  渲染器只用 SourceHanSansCN,该字体未加载
+#   - webgui.bat / webserver.bat   浏览器/CLI 启动脚本
+#   - logs/ / results/             运行时产物
+#   - cache.db / *.bak             运行时缓存与备份
 #
 # 用法(在仓库根目录执行):
 #   pwsh -File desktop/scripts/sync-engine.ps1
@@ -30,8 +35,8 @@ $rc = (Start-Process -FilePath robocopy `
     -ArgumentList @(
         "`"$src`"", "`"$dst`"",
         "/E",
-        "/XD", "webui", "logs", "results",
-        "/XF", "cache.db", "*.bak", "webgui.bat", "webserver.bat",
+        "/XD", "webui", "logs", "results", "gui",
+        "/XF", "cache.db", "*.bak", "webgui.bat", "webserver.bat", "WenQuanYiMicroHei-01.ttf",
         "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS"
     ) `
     -NoNewWindow -Wait -PassThru).ExitCode

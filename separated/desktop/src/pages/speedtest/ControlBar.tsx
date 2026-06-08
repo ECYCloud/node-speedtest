@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Play, Loader2, Square } from "lucide-react";
 import { useTest } from "../../store/test";
 import { Button, Card, Select, SectionTitle } from "../../components/ui";
@@ -23,7 +22,6 @@ const SORT_METHODS = [
 ];
 
 export default function ControlBar() {
-  const [stopping, setStopping] = useState(false);
   const {
     selected, results, status,
     testMode, sortMethod,
@@ -31,16 +29,13 @@ export default function ControlBar() {
     startTest, stopTest,
   } = useTest();
 
+  // 三态对应三种按钮形态:
+  //   running  → "停止"(可点)
+  //   stopping → "停止中"(loader,disabled) — 前端已发停止指令,等待后端 batchTest
+  //              真正退出循环并被 polling 拉到。这段时间不切回"开始测速",避免闪烁。
+  //   stopped  → "开始测速"(可点,选中节点 > 0)
   const running = status === "running";
-
-  async function onStop() {
-    setStopping(true);
-    try {
-      await stopTest();
-    } finally {
-      setStopping(false);
-    }
-  }
+  const stopping = status === "stopping";
 
   return (
     <Card className="p-5">
@@ -53,7 +48,7 @@ export default function ControlBar() {
             value={testMode}
             onChange={(v) => setTestMode(v as typeof testMode)}
             options={TEST_MODES}
-            disabled={running}
+            disabled={running || stopping}
           />
         </Field>
         <Field label="排序方式">
@@ -61,7 +56,7 @@ export default function ControlBar() {
             value={sortMethod}
             onChange={setSortMethod}
             options={SORT_METHODS}
-            disabled={running}
+            disabled={running || stopping}
           />
         </Field>
       </div>
@@ -69,15 +64,17 @@ export default function ControlBar() {
         <div className="text-xs text-fg-muted min-w-0 flex-1">
           {running
             ? `共 ${selected.size} 个节点中，已完成 ${results.length}`
-            : selected.size > 0
-              ? `将测试 ${selected.size} 个节点`
-              : "请先在节点列表中勾选节点"}
+            : stopping
+              ? "正在停止当前任务…"
+              : selected.size > 0
+                ? `将测试 ${selected.size} 个节点`
+                : "请先在节点列表中勾选节点"}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {running ? (
+          {(running || stopping) ? (
             <Button
               variant="danger"
-              onClick={onStop}
+              onClick={stopTest}
               disabled={stopping}
               className="min-w-[5.5rem] justify-center"
             >

@@ -17,8 +17,16 @@ function sanitizeConfigs(list: unknown): NodeConfig[] {
   });
 }
 
+/** 测试状态机:
+    - "stopped"  完全空闲(初始/批次结束/手动停止已落地)
+    - "running"  后端正在跑节点
+    - "stopping" 用户已点停止,但后端 batchTest detached thread 还没真退出
+                 (下载累积循环要 ~500ms 才检查 stop_requested,polling 也要 ~1.2s
+                 才能拉到后端 start_flag=false)。这段过渡期前端按钮锁在"停止中",
+                 polling 拿到的 status=running 不允许覆盖回去 — 否则会出现
+                 "开始测速→停止→开始测速"的闪烁。 */
 interface TestStore {
-  status: "stopped" | "running";
+  status: "stopped" | "running" | "stopping";
   configs: NodeConfig[];
   selected: Set<number>;
   results: NodeResult[];
@@ -194,13 +202,18 @@ export const useTest = create<TestStore>((set, get) => ({
   /** 停止测试:发 POST /stop,后端在 batchTest 节点循环间检测到 stop_requested 后跳出,
       保留 allNodes/targetNodes,用户可立即点"开始"重测同一份订阅。
       旧实现走 Tauri 命令 restart_backend 杀后端进程,会清空内存里的节点列表 →
-      再点开始 0 节点,表现为"任何节点都无法测试"。 */
+      再点开始 0 节点,表现为"任何节点都无法测试"。
+
+      状态过渡:running → stopping(立即) → stopped(由 refreshOnce 拉到后端 stopped 时切)。
+      不能直接 set stopped,否则 polling 在中间窗口拉到后端仍 running 会把 status 倒回去,
+      表现为按钮"开始测速→停止→开始测速"闪烁。 */
   async stopTest() {
-    set({ status: "stopped", current: null });
+    if (get().status !== "running") return;
+    set({ status: "stopping" });
     try {
       await api.stop();
     } catch {
-      /* 即便请求失败前端 status 已切换,polling 会按后端真实状态再校正 */
+      /* 即便请求失败 polling 仍会拉到真实状态最终落到 stopped */
     }
   },
 
@@ -218,7 +231,19 @@ export const useTest = create<TestStore>((set, get) => ({
       const map = new Map<string, NodeResult>();
       for (const x of get().results) map.set(x.remarks, x);
       for (const x of r.results) map.set(x.remarks, x);
-      set({ status: r.status, results: [...map.values()], current: cur });
+      // 状态合并规则:
+      //   stopping 中间态:只允许过渡到 stopped(后端真停了),后端仍 running 时
+      //     保持 stopping —— 防止"用户已点停止 → 按钮短暂跳回'停止' → 又跳回'开始'"闪烁。
+      //   其他状态:直接采用后端真实状态。
+      const cur_status = get().status;
+      const next_status: TestStore["status"] =
+        cur_status === "stopping"
+          ? r.status === "stopped" ? "stopped" : "stopping"
+          : r.status;
+      // stopping 过渡期不刷新 current —— 保持停止瞬间的"已完成"语义,避免
+      // 又出现一个正在测试的节点卡片闪一下。
+      const next_current = cur_status === "stopping" ? null : cur;
+      set({ status: next_status, results: [...map.values()], current: next_current });
     } catch {
       /* 忽略偶发抖动 */
     }

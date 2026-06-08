@@ -9,6 +9,9 @@ SET(CMAKE_CXX_STANDARD 17)
 ADD_DEFINITIONS(-Wall -Wextra -Wno-unused-parameter -Wno-unused-result)
 
 OPTION(USING_STD_REGEX "Use std::regex from C++ library instead of PCRE2." OFF)
+# 桌面端 sidecar 引擎模式:加入 separated/src/ 的 HTTP 服务源文件,链接 libevent。
+# 默认 OFF —— 主项目仍是纯 CLI 二进制,与本目录无任何依赖关系。
+OPTION(BUILD_WEBSERVER_ENGINE "Build the /web sidecar engine for the Tauri desktop app (depends on libevent)" OFF)
 
 INCLUDE(CheckCXXSourceCompiles)
 CHECK_CXX_SOURCE_COMPILES(
@@ -32,7 +35,7 @@ IF(HAVE_MSG_NOSIGNAL)
 	ADD_DEFINITIONS(-DHAVE_MSG_NOSIGNAL)
 ENDIF()
 
-ADD_EXECUTABLE(stairspeedtest 
+ADD_EXECUTABLE(stairspeedtest
 	src/confbuild.cpp
 	src/geoip.cpp
 	src/emoji.cpp
@@ -49,25 +52,30 @@ ADD_EXECUTABLE(stairspeedtest
 	src/rulematch.cpp
 	src/socket.cpp
 	src/speedtestutil.cpp
+	src/subconv.cpp
 	src/tcping.cpp
 	src/webget.cpp
-	src/webgui_wrapper.cpp
-	src/webserver_libevent.cpp)
+	$<$<BOOL:${BUILD_WEBSERVER_ENGINE}>:${CMAKE_SOURCE_DIR}/separated/src/webgui_wrapper.cpp>
+	$<$<BOOL:${BUILD_WEBSERVER_ENGINE}>:${CMAKE_SOURCE_DIR}/separated/src/webserver_libevent.cpp>)
 INCLUDE_DIRECTORIES(src)
 LINK_DIRECTORIES(${CMAKE_SOURCE_DIR})
 
 FIND_PACKAGE(PkgConfig REQUIRED)
 
+IF(BUILD_WEBSERVER_ENGINE)
+	# /web 模式需要 libevent 的 HTTP 服务能力。BUILD_WEBSERVER_ENGINE 宏会让
+	# main.cpp / webgui_wrapper.cpp 启用 #ifdef 块,CLI 模式下完全不参与编译。
+	TARGET_COMPILE_DEFINITIONS(stairspeedtest PRIVATE BUILD_WEBSERVER_ENGINE)
+	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/separated/src)
+	PKG_CHECK_MODULES(LIBEVENT libevent REQUIRED)
+	INCLUDE_DIRECTORIES(${LIBEVENT_INCLUDE_DIRS})
+	LINK_DIRECTORIES(${LIBEVENT_LIBRARY_DIRS})
+	TARGET_LINK_LIBRARIES(stairspeedtest ${LIBEVENT_LIBRARIES})
+ENDIF()
+
 SET(THREADS_PREFER_PTHREAD_FLAG ON)
 FIND_PACKAGE(Threads REQUIRED)
 TARGET_LINK_LIBRARIES(stairspeedtest ${CMAKE_THREAD_LIBS_INIT})
-
-PKG_CHECK_MODULES(LIBEVENT libevent REQUIRED)
-FIND_PATH(LIBEVENT_INCLUDE_DIR NAMES event.h PATHS ${LIBEVENT_INCLUDE_DIRS})
-FIND_LIBRARY(LIBEVENT_LIBRARY NAMES event PATHS ${LIBEVENT_LIBRARY_DIRS})
-LINK_DIRECTORIES(${LIBEVENT_LIBRARY_DIRS})
-INCLUDE_DIRECTORIES(${LIBEVENT_INCLUDE_DIR})
-TARGET_LINK_LIBRARIES(stairspeedtest ${LIBEVENT_LIBRARY})
 
 FIND_PACKAGE(CURL 7.54.0 REQUIRED)
 LINK_DIRECTORIES(${CURL_LIBRARY_DIRS})

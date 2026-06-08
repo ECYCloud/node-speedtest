@@ -19,6 +19,7 @@
 #include "socket.h"
 #include "misc.h"
 #include "speedtestutil.h"
+#include "subconv.h"
 #include "printout.h"
 #include "printmsg.h"
 #include "webget.h"
@@ -41,6 +42,16 @@ bool rpcmode = false;
 std::string sub_url;
 bool pause_on_done = true;
 
+#ifdef BUILD_WEBSERVER_ENGINE
+// Webserver 引擎模式(供 Tauri 桌面端 sidecar 使用):/web 启动后通过 HTTP 接口
+// 暴露 /readsubscriptions /start /getresults 等路由,由 webgui_wrapper.cpp 实现。
+// CLI 构建(默认)下整个 BUILD_WEBSERVER_ENGINE 段都不编译,二进制保持纯净。
+bool webserver_mode = false;
+std::string listen_address = "127.0.0.1";
+int listen_port = 10870;
+void ssrspeed_webserver_routine(const std::string &listen_address, int listen_port);
+#endif
+
 //for use globally
 bool multilink = false;
 int socksport = 65432;
@@ -48,10 +59,8 @@ std::string socksaddr = "127.0.0.1";
 std::string custom_group;
 std::string pngpath;
 
-//for use of web server
-bool webserver_mode = false;
-std::string listen_address = "127.0.0.1";
-int listen_port = 10870, cur_node_id = -1;
+//current node id being tested (shared with result serialization)
+int cur_node_id = -1;
 
 bool ss_libev = true;
 bool ssr_libev = true;
@@ -74,11 +83,9 @@ bool single_test_force_export = false;
 bool verbose = false;
 std::string export_sort_method = "rmaxspeed";
 
-// Indexed by SPEEDTEST_MESSAGE_FOUND* enum values; sized to comfortably cover
-// the largest *FOUND* value (currently SPEEDTEST_MESSAGE_FOUNDANYTLS which sits
-// just below SPEEDTEST_MESSAGE_EOF). Enlarging it is cheap and prevents OOB
-// access in singleTest() when a node's linkType is one of the new protocols.
-int avail_status[64] = {};
+// Single flag: whether the mihomo binary exists and the kernel can be used.
+// Every node now routes through the kernel, so a per-protocol matrix is gone.
+bool mihomo_available = false;
 unsigned int node_count = 0;
 int curGroupID = 0;
 
@@ -90,7 +97,6 @@ bool serve_cache_on_fetch_fail = false, print_debug_info = false;
 int explodeLog(const std::string &log, std::vector<nodeInfo> &nodes);
 int tcping(nodeInfo &node);
 void getTestFile(nodeInfo &node, const std::string &proxy, const std::vector<downloadLink> &downloadFiles, const std::vector<linkMatchRule> &matchRules, const std::string &defaultTestFile);
-void ssrspeed_webserver_routine(const std::string &listen_address, int listen_port);
 std::string get_nat_type_thru_socks5(const std::string &server, uint16_t port, const std::string &username = "", const std::string &password = "", const std::string &stun_server = "stun.l.google.com", uint16_t stun_port = 19302);
 // Forward declaration so the signal handler (defined early in this file) can
 // reuse the same label-decoration pass that batchTest() runs at the end of a
@@ -172,19 +178,11 @@ void clientCheck()
     std::string mihomo_path = "tools/clients/mihomo";
 #endif // _WIN32
 
-    int status = fileExist(mihomo_path) ? 1 : 0;
-    if(status)
+    mihomo_available = fileExist(mihomo_path);
+    if(mihomo_available)
         writeLog(LOG_TYPE_INFO, "Found mihomo core at path " + mihomo_path);
     else
         writeLog(LOG_TYPE_WARN, "mihomo core not found at path " + mihomo_path);
-    // All proxy-protocol slots map to the single mihomo binary now.
-    avail_status[SPEEDTEST_MESSAGE_FOUNDVMESS]   = status;
-    avail_status[SPEEDTEST_MESSAGE_FOUNDSS]      = status;
-    avail_status[SPEEDTEST_MESSAGE_FOUNDSSR]     = status;
-    avail_status[SPEEDTEST_MESSAGE_FOUNDTROJAN]  = status;
-    avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS]   = status;
-    avail_status[SPEEDTEST_MESSAGE_FOUNDHY2]     = status;
-    avail_status[SPEEDTEST_MESSAGE_FOUNDANYTLS]  = status;
 }
 
 // Build the subscription User-Agent as "Clash mihomo/<ver> stairspeedtest-reborn",
@@ -221,6 +219,62 @@ static void initUserAgent()
     user_agent_str = "Clash mihomo/" + ver + " stairspeedtest-reborn";
     mihomo_kernel_version = ver; // share the real version with the footer
     writeLog(LOG_TYPE_INFO, "Subscription User-Agent: " + user_agent_str);
+}
+
+// Compare two "vX.Y.Z" version strings segment-by-segment as integers.
+// Returns >0 if a>b, <0 if a<b, 0 if equal. Missing segments count as 0, so
+// "v1.19" vs "v1.19.0" compares equal and "v1.9" < "v1.19" (numeric, not lex).
+// Non-static so the webserver engine (webgui_wrapper.cpp) can reuse it for
+// the /checkupdate route — version compare is otherwise duplicated logic.
+int compareKernelVersion(const std::string &a, const std::string &b)
+{
+    auto strip = [](std::string v){ if(!v.empty() && (v[0] == 'v' || v[0] == 'V')) v.erase(0, 1); return v; };
+    string_array sa = split(strip(a), "."), sb = split(strip(b), ".");
+    size_t n = std::max(sa.size(), sb.size());
+    for(size_t i = 0; i < n; ++i)
+    {
+        int x = 0, y = 0;
+        try { if(i < sa.size()) x = std::stoi(sa[i]); } catch(...) { x = 0; }
+        try { if(i < sb.size()) y = std::stoi(sb[i]); } catch(...) { y = 0; }
+        if(x != y) return x - y;
+    }
+    return 0;
+}
+
+// Query the latest mihomo kernel release from GitHub and, if it is newer than
+// the bundled kernel, print a one-line hint. Best-effort: any network/parse
+// failure is logged and silently ignored (no UI noise). Runs in a detached
+// background thread so a slow/blocked GitHub connection never stalls startup.
+static void checkMihomoUpdate()
+{
+    std::thread([](){
+        const std::string local = mihomo_kernel_version; // set by initUserAgent()
+        if(local.empty()) return;
+        // /releases/latest returns the latest non-prerelease; tag_name is "vX.Y.Z".
+        std::string body = webGet("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", "", 0);
+        if(body.empty())
+        {
+            writeLog(LOG_TYPE_WARN, "mihomo update check: empty response from GitHub.");
+            return;
+        }
+        rapidjson::Document j;
+        j.Parse(body.data());
+        if(j.HasParseError() || !j.HasMember("tag_name") || !j["tag_name"].IsString())
+        {
+            writeLog(LOG_TYPE_WARN, "mihomo update check: unexpected GitHub response.");
+            return;
+        }
+        std::string latest = j["tag_name"].GetString();
+        if(latest.empty()) return;
+        if(compareKernelVersion(latest, local) > 0)
+        {
+            writeLog(LOG_TYPE_INFO, "mihomo update available: local " + local + ", latest " + latest);
+            std::cout << "\n发现新版 mihomo 内核：本地 " << local << "，最新 " << latest
+                      << "。\n下载：https://github.com/MetaCubeX/mihomo/releases/latest\n" << std::endl;
+        }
+        else
+            writeLog(LOG_TYPE_INFO, "mihomo kernel is up to date (" + local + ").");
+    }).detach();
 }
 
 int runClient(int client)
@@ -316,50 +370,71 @@ int killClient(int client)
     return 0;
 }
 
-// 启动 mihomo 内核并把所有节点打包到一份 config.yaml 里，
-// 同时把每个 node.proxyStr 重写为 "node-N"(buildAllNodesYAML 内部完成),
-// 这样后续 mihomoSwitchProxy 才能用节点名(而不是整个 yaml)切换 outbound。
+// 启动后从内核反查某个 provider 的节点列表，按写入顺序回填权威 name(用于切
+// outbound)和 type(用于显示)。内核对 YAML proxies 数组与 base64 链接列表都按
+// 行序保序，所以直接 zip;若数量不一致(内核丢弃了非法节点)取较小长度对齐。
+static void reconcileProvider(const std::string &provider,
+                              std::vector<nodeInfo*> &order)
+{
+    if(order.empty()) return;
+    std::string body = webGet("http://127.0.0.1:9990/providers/proxies/" +
+                              UrlEncode(provider), "", 0);
+    if(body.empty()) return;
+    rapidjson::Document j;
+    j.Parse(body.data());
+    if(j.HasParseError() || !j.HasMember("proxies") || !j["proxies"].IsArray())
+        return;
+    const auto &arr = j["proxies"];
+    size_t n = std::min(static_cast<size_t>(arr.Size()), order.size());
+    for(size_t i = 0; i < n; ++i)
+    {
+        const auto &p = arr[static_cast<rapidjson::SizeType>(i)];
+        if(p.HasMember("name") && p["name"].IsString())
+            order[i]->proxyStr = p["name"].GetString();
+        if(p.HasMember("type") && p["type"].IsString())
+            order[i]->proxy_type = p["type"].GetString();
+    }
+}
+
+// 启动 mihomo 内核:把存活节点拆成 file proxy-provider(YAML 单元 + 链接单元),
+// 写盘后起内核;内核自己解析协议字段,新协议跟着内核走无需改 C++。就绪后反查
+// /providers/proxies 回填每个节点权威的 name(切 outbound 用)和 type(显示用)。
 //
-// 关键:CLI 模式在 main() 里走过这一步;webserver 模式过去**漏了这一步**,
-// 导致 batchTest 用整个 yaml 当节点名传给 mihomoSwitchProxy,
-// mihomo outbound 始终切不到目标节点 → 全部 socks5 connect not accepted → 测试 N/A。
-//
-// 返回 true 表示 mihomo Clash API 已就绪可以测试;false 表示无需启动或启动超时。
+// 返回 true 表示 Clash API 已就绪可测试;false 表示无可测节点或启动超时。
 bool launchMihomoForNodes(std::vector<nodeInfo> &nodes)
 {
     if(nodes.empty()) return false;
-    bool needs_kernel = false;
-    for(const auto &n : nodes)
-    {
-        if(n.linkType != SPEEDTEST_MESSAGE_FOUNDSOCKS &&
-           n.linkType != SPEEDTEST_MESSAGE_FOUNDHTTP &&
-           !n.proxyStr.empty() && n.proxyStr != "LOG")
-        {
-            needs_kernel = true;
-            break;
-        }
-    }
-    if(!needs_kernel) return false;
-    if(!avail_status[SPEEDTEST_MESSAGE_FOUNDVLESS]) return false;
+    if(!mihomo_available) return false;
 
-    // 先杀掉旧的 mihomo，避免 9990 / 65432 端口冲突
+    ProvidersBuild build = buildProvidersConfig(nodes, socksport, "127.0.0.1:9990");
+    if(build.yaml_order.empty() && build.link_order.empty())
+        return false; // 全是 LOG 导入或空节点,无需内核
+
+    // 先杀掉旧的 mihomo，避免 9990 / 端口冲突
 #ifdef _WIN32
     killProgram("mihomo.exe");
 #else
     killProgram("mihomo");
 #endif
 
-    std::string yaml = buildAllNodesYAML(nodes); // 内部把每个 node.proxyStr 改成 "node-N"
-    fileWrite("config.yaml", yaml, true);
-    writeLog(LOG_TYPE_INFO, "Packed " + std::to_string(nodes.size()) + " nodes into config.yaml; starting mihomo once.");
+    if(!build.yaml_provider_path.empty())
+        fileWrite(build.yaml_provider_path, build.yaml_provider_body, true);
+    if(!build.link_provider_path.empty())
+        fileWrite(build.link_provider_path, build.link_provider_body, true);
+    fileWrite("config.yaml", build.config_yaml, true);
+    writeLog(LOG_TYPE_INFO, "Wrote provider files + config.yaml for " +
+             std::to_string(build.yaml_order.size() + build.link_order.size()) +
+             " nodes; starting mihomo once.");
     runClient(0);
-    if(mihomoWaitReady(8000))
+    if(!mihomoWaitReady(8000))
     {
-        writeLog(LOG_TYPE_INFO, "mihomo Clash API is ready.");
-        return true;
+        writeLog(LOG_TYPE_ERROR, "mihomo did not respond on http://127.0.0.1:9990 within 8s; tests may fail.");
+        return false;
     }
-    writeLog(LOG_TYPE_ERROR, "mihomo did not respond on http://127.0.0.1:9990 within 8s; tests may fail.");
-    return false;
+    writeLog(LOG_TYPE_INFO, "mihomo Clash API is ready; reconciling node names/types.");
+    reconcileProvider("yaml_sub", build.yaml_order);
+    reconcileProvider("link_sub", build.link_order);
+    return true;
 }
 
 int terminateClient(int client)
@@ -411,6 +486,14 @@ void readConf(std::string path)
     if(image_scale > 6) image_scale = 6;
     ini.GetBoolIfExist("export_as_ssrspeed", export_as_ssrspeed);
 
+#ifdef BUILD_WEBSERVER_ENGINE
+    // [webserver] 段:仅引擎构建模式下读取,允许 pref.ini 覆盖默认监听地址/端口。
+    ini.EnterSection("webserver");
+    ini.GetIfExist("listen_address", listen_address);
+    ini.GetIntIfExist("listen_port", listen_port);
+    ini.GetBoolIfExist("webserver_mode", webserver_mode);
+#endif
+
     ini.EnterSection("rules");
     if(ini.ItemPrefixExist("test_file_urls"))
     {
@@ -447,11 +530,6 @@ void readConf(std::string path)
             }
         }
     }
-
-    ini.EnterSection("webserver");
-    ini.GetBoolIfExist("webserver_mode", webserver_mode);
-    ini.GetIfExist("listen_address", listen_address);
-    ini.GetIntIfExist("listen_port", listen_port);
 }
 
 extern std::vector<nodeInfo> allNodes;
@@ -632,12 +710,14 @@ void chkArg(int argc, char* argv[])
     {
         if(!strcmp(argv[i], "/rpc"))
             rpcmode = true;
-        else if(!strcmp(argv[i], "/web"))
-            webserver_mode = true;
         else if(!strcmp(argv[i], "/u") && argc > i + 1)
             sub_url.assign(argv[++i]);
         else if(!strcmp(argv[i], "/g") && argc > i + 1)
             custom_group.assign(argv[++i]);
+#ifdef BUILD_WEBSERVER_ENGINE
+        else if(!strcmp(argv[i], "/web"))
+            webserver_mode = true;
+#endif
     }
 }
 
@@ -739,31 +819,19 @@ int singleTest(nodeInfo &node)
     }
     defer(auto end = steady_clock::now(); auto lapse = duration_cast<seconds>(end - start); node.duration = lapse.count();)
 
-    if(node.linkType == SPEEDTEST_MESSAGE_FOUNDSOCKS || node.linkType == SPEEDTEST_MESSAGE_FOUNDHTTP)
+    // 所有节点统一走 mihomo 内核:proxyStr 是内核里的节点名(切 outbound 用),
+    // 测速/延迟都经本地 socks5。SOCKS5/HTTP 也由内核承载,不再有直连分支。
+    testserver = socksaddr;
+    testport = socksport;
+    if(!node.proxyStr.empty() && node.proxyStr != "LOG")
     {
-        // SOCKS5 / HTTP nodes connect to the upstream proxy directly without
-        // a local kernel. proxyStr stores "user=<u>&pass=<p>".
-        testserver = node.server;
-        testport = node.port;
-        username = getUrlArg(node.proxyStr, "user");
-        password = getUrlArg(node.proxyStr, "pass");
-    }
-    else
-    {
-        // Plan B: kernel was started once with all nodes pre-loaded; node.proxyStr
-        // now holds the in-config name (e.g. "node-3") rather than YAML.
-        testserver = socksaddr;
-        testport = socksport;
-        if(node.linkType != -1 && avail_status[node.linkType] == 1 && !node.proxyStr.empty())
-        {
-            writeLog(LOG_TYPE_INFO, "Switching mihomo outbound to '" + node.proxyStr + "'...");
-            if(!mihomoSwitchProxy(node.proxyStr))
-                writeLog(LOG_TYPE_WARN, "Proxy switch failed; the test will probably show no speed.");
-            // mihomo 切完 outbound 之后，QUIC 类协议(hy2/anytls/tuic)需要更长
-            // 时间完成新链路握手 — TCP 协议 200ms 够，UDP 类至少 800ms 才稳。
-            // 给所有协议统一 800ms 是最简单且不会拖慢太多的方案。
-            sleep(800);
-        }
+        writeLog(LOG_TYPE_INFO, "Switching mihomo outbound to '" + node.proxyStr + "'...");
+        if(!mihomoSwitchProxy(node.proxyStr))
+            writeLog(LOG_TYPE_WARN, "Proxy switch failed; the test will probably show no speed.");
+        // mihomo 切完 outbound 之后，QUIC 类协议(hy2/anytls/tuic)需要更长
+        // 时间完成新链路握手 — TCP 协议 200ms 够，UDP 类至少 800ms 才稳。
+        // 给所有协议统一 800ms 是最简单且不会拖慢太多的方案。
+        sleep(800);
     }
     // Plan B: kernel is shared across the whole run, so per-test kill is gone.
     // (macOS still wipes leftover processes on signal exit.)
@@ -794,10 +862,12 @@ int singleTest(nodeInfo &node)
 
     if(speedtest_mode != "speedonly")
     {
-        bool via_kernel = (node.linkType == SPEEDTEST_MESSAGE_FOUNDHY2 ||
-                           node.linkType == SPEEDTEST_MESSAGE_FOUNDHYSTERIA ||
-                           node.linkType == SPEEDTEST_MESSAGE_FOUNDTUIC ||
-                           node.linkType == SPEEDTEST_MESSAGE_FOUNDANYTLS) &&
+        // QUIC 类协议(Hysteria2 / Hysteria / TUIC / AnyTLS)经 libcurl→socks5
+        // 探测首包慢/多路复用常拿不到结果,改走内核 /delay 直接拨测。判断依据是
+        // 内核反查回填的 proxy_type 字符串,新增同类协议时这里跟着内核走即可。
+        std::string pt = toLower(node.proxy_type);
+        bool via_kernel = (pt == "hysteria2" || pt == "hysteria" ||
+                           pt == "tuic" || pt == "anytls") &&
                           !node.proxyStr.empty();
         double latency_ms = -1.0;
         int rawms[10] = {};
@@ -858,7 +928,6 @@ int singleTest(nodeInfo &node)
     printMsg(SPEEDTEST_MESSAGE_GOTPING, rpcmode, id, node.avgPing, node.pkLoss);
 
     getTestFile(node, proxy, downloadFiles, matchRules, def_test_file);
-    if(!webserver_mode)
     {
         geoIPInfo outbound = node.outboundGeoIP.get();
         if(outbound.organization.size())
@@ -963,7 +1032,7 @@ void batchTest(std::vector<nodeInfo> &nodes)
         writeLog(LOG_TYPE_INFO, "All nodes tested. Total/Online nodes: " + std::to_string(node_count) + "/" + std::to_string(onlines) + " Traffic used: " + speedCalc(tottraffic * 1.0));
         decorateNodeLabels(nodes); // normalize flag emojis (e.g. 🇭🇰 -> [HK]) before persistence
         saveResult(nodes);
-        if(webserver_mode || !multilink)
+        if(!multilink)
         {
             printMsg(SPEEDTEST_MESSAGE_PICSAVING, rpcmode);
             writeLog(LOG_TYPE_INFO, "Now exporting result...");
@@ -998,41 +1067,33 @@ void addNodes(std::string link, bool multilink)
 {
     int linkType = -1;
     std::vector<nodeInfo> nodes;
-    nodeInfo node;
     std::string strSub, strInput, fileContent, strProxy;
 
     link = replace_all_distinct(link, "\"", "");
     writeLog(LOG_TYPE_INFO, "Received Link.");
-    if(startsWith(link, "vmess://") || startsWith(link, "vmess1://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDVMESS;
-    else if(startsWith(link, "vless://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDVLESS;
-    else if(startsWith(link, "hysteria2://") || startsWith(link, "hy2://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDHY2;
-    else if(startsWith(link, "anytls://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDANYTLS;
-    else if(startsWith(link, "ss://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDSS;
-    else if(startsWith(link, "ssr://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDSSR;
-    else if(startsWith(link, "socks://") || startsWith(link, "https://t.me/socks") || startsWith(link, "tg://socks"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDSOCKS;
-    else if(startsWith(link, "trojan://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDTROJAN;
-    else if(startsWith(link, "http://") || startsWith(link, "https://") || startsWith(link, "surge:///install-config"))
+
+    // 来源四类:订阅 URL / data:upload / 本地文件 / 直接内容(单条分享链接或
+    // 粘贴的订阅文本)。协议识别全部交给 mihomo,这里不再按 scheme 分发。
+    if(startsWith(link, "http://") || startsWith(link, "https://") || startsWith(link, "surge:///install-config"))
         linkType = SPEEDTEST_MESSAGE_FOUNDSUB;
-    else if(startsWith(link, "Netch://"))
-        linkType = SPEEDTEST_MESSAGE_FOUNDNETCH;
     else if(link == "data:upload")
         linkType = SPEEDTEST_MESSAGE_FOUNDUPD;
     else if(fileExist(link))
         linkType = SPEEDTEST_MESSAGE_FOUNDLOCAL;
+    else
+        linkType = SPEEDTEST_MESSAGE_MULTILINK; // 直接内容(交给 loadSubscription)
+
+    // filterNodes 后统一套用用户自定义分组名(loadSubscription 不设 group)。
+    auto applyGroup = [&](std::vector<nodeInfo> &ns){
+        if(!custom_group.empty())
+            for(auto &n : ns) n.group = custom_group;
+    };
 
     switch(linkType)
     {
     case SPEEDTEST_MESSAGE_FOUNDSUB:
         printMsg(SPEEDTEST_MESSAGE_FOUNDSUB, rpcmode);
-        if(!rpcmode && !multilink && !webserver_mode && !sub_url.size())
+        if(!rpcmode && !multilink && !sub_url.size())
         {
             printMsg(SPEEDTEST_MESSAGE_GROUP, rpcmode);
             getline(std::cin, strInput);
@@ -1063,8 +1124,9 @@ void addNodes(std::string link, bool multilink)
         if(strSub.size())
         {
             writeLog(LOG_TYPE_INFO, "Parsing subscription data...");
-            explodeConfContent(strSub, override_conf_port, ss_libev, ssr_libev, nodes);
+            loadSubscription(strSub, override_conf_port, nodes);
             filterNodes(nodes, custom_exclude_remarks, custom_include_remarks, curGroupID);
+            applyGroup(nodes);
             copyNodes(nodes, allNodes);
         }
         else
@@ -1087,10 +1149,10 @@ void addNodes(std::string link, bool multilink)
         }
         writeLog(LOG_TYPE_INFO, "Parsing configuration file data...");
         printMsg(SPEEDTEST_MESSAGE_PARSING, rpcmode);
-
+        // 先试历史结果导入(.log),非历史文件再交给订阅归一化处理。
         if(explodeLog(fileGet(link), nodes) == -1)
         {
-            if(explodeConf(link, override_conf_port, ss_libev, ssr_libev, nodes) == SPEEDTEST_ERROR_UNRECOGFILE)
+            if(loadSubscription(fileGet(link), override_conf_port, nodes) == 0)
             {
                 printMsg(SPEEDTEST_ERROR_UNRECOGFILE, rpcmode);
                 writeLog(LOG_TYPE_ERROR, "Invalid configuration file!");
@@ -1098,6 +1160,7 @@ void addNodes(std::string link, bool multilink)
             }
         }
         filterNodes(nodes, custom_exclude_remarks, custom_include_remarks, curGroupID);
+        applyGroup(nodes);
         copyNodes(nodes, allNodes);
         break;
     case SPEEDTEST_MESSAGE_FOUNDUPD:
@@ -1108,7 +1171,7 @@ void addNodes(std::string link, bool multilink)
         fileContent = base64_decode(fileContent.substr(fileContent.find(",") + 1));
         writeLog(LOG_TYPE_INFO, "Parsing configuration file data...");
         printMsg(SPEEDTEST_MESSAGE_PARSING, rpcmode);
-        if(explodeConfContent(fileContent, override_conf_port, ss_libev, ssr_libev, nodes) == SPEEDTEST_ERROR_UNRECOGFILE)
+        if(loadSubscription(fileContent, override_conf_port, nodes) == 0)
         {
             printMsg(SPEEDTEST_ERROR_UNRECOGFILE, rpcmode);
             writeLog(LOG_TYPE_ERROR, "Invalid configuration file!");
@@ -1116,32 +1179,23 @@ void addNodes(std::string link, bool multilink)
         else
         {
             filterNodes(nodes, custom_exclude_remarks, custom_include_remarks, curGroupID);
+            applyGroup(nodes);
             copyNodes(nodes, allNodes);
         }
         break;
     default:
-        if(linkType > 0)
-        {
-            node_count = 1;
-            printMsg(linkType, rpcmode);
-            explode(link, ss_libev, ssr_libev, override_conf_port, node);
-            if(custom_group.size() != 0)
-                node.group = custom_group;
-            if(node.server.empty())
-            {
-                writeLog(LOG_TYPE_ERROR, "No valid link found.");
-                printMsg(SPEEDTEST_ERROR_NORECOGLINK, rpcmode);
-            }
-            else
-            {
-                node.groupID = curGroupID;
-                allNodes.push_back(node);
-            }
-        }
-        else
+        // 直接内容:单条分享链接,或粘贴的 Clash YAML / base64 订阅文本。
+        printMsg(SPEEDTEST_MESSAGE_FETCHSUB, rpcmode);
+        if(loadSubscription(link, override_conf_port, nodes) == 0)
         {
             writeLog(LOG_TYPE_ERROR, "No valid link found.");
             printMsg(SPEEDTEST_ERROR_NORECOGLINK, rpcmode);
+        }
+        else
+        {
+            filterNodes(nodes, custom_exclude_remarks, custom_include_remarks, curGroupID);
+            applyGroup(nodes);
+            copyNodes(nodes, allNodes);
         }
     }
 }
@@ -1221,15 +1275,23 @@ int main(int argc, char* argv[])
 #endif // __APPLE__
     clientCheck();
     initUserAgent(); // build "Clash mihomo/<ver> stairspeedtest-reborn" UA
+    if(!rpcmode)
+        checkMihomoUpdate(); // background check; prints a hint only if a newer kernel exists
     socksport = checkPort(socksport);
     writeLog(LOG_TYPE_INFO, "Using local port: " + std::to_string(socksport));
     writeLog(LOG_TYPE_INFO, "Init completed.");
-    //intro message
+
+#ifdef BUILD_WEBSERVER_ENGINE
+    // 如果 pref.ini 或 /web 参数指定了 webserver 模式,把控制权交给 webgui_wrapper,
+    // 启动 HTTP 服务后在此线程内阻塞处理请求(start_web_server_multi 阻塞返回前
+    // 永远不退出),不再走下面的交互式 CLI 测速流程。
     if(webserver_mode)
     {
         ssrspeed_webserver_routine(listen_address, listen_port);
         return 0;
     }
+#endif
+    //intro message
     printMsg(SPEEDTEST_MESSAGE_WELCOME, rpcmode);
     if(sub_url.size())
     {

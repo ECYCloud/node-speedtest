@@ -79,31 +79,6 @@ void splitFlag(const std::string &s, std::string &flag, std::string &rest)
     while(!rest.empty() && (rest[0] == ' ' || rest[0] == '\t')) rest.erase(0, 1);
 }
 
-// Map link type to a short protocol label (plain text).
-std::string protoLabel(int linkType)
-{
-    switch(linkType)
-    {
-    case SPEEDTEST_MESSAGE_FOUNDVMESS:   return "Vmess";
-    case SPEEDTEST_MESSAGE_FOUNDVLESS:   return "Vless";
-    case SPEEDTEST_MESSAGE_FOUNDSS:      return "SS";
-    case SPEEDTEST_MESSAGE_FOUNDSSR:     return "SSR";
-    case SPEEDTEST_MESSAGE_FOUNDTROJAN:  return "Trojan";
-    case SPEEDTEST_MESSAGE_FOUNDHY2:     return "Hysteria2";
-    case SPEEDTEST_MESSAGE_FOUNDANYTLS:  return "AnyTLS";
-    case SPEEDTEST_MESSAGE_FOUNDTUIC:    return "TUIC";
-    case SPEEDTEST_MESSAGE_FOUNDHYSTERIA: return "Hysteria";
-    case SPEEDTEST_MESSAGE_FOUNDWIREGUARD: return "WireGuard";
-    case SPEEDTEST_MESSAGE_FOUNDSSH:     return "SSH";
-    case SPEEDTEST_MESSAGE_FOUNDMIERU:   return "Mieru";
-    case SPEEDTEST_MESSAGE_FOUNDSHADOWTLS: return "ShadowTLS";
-    case SPEEDTEST_MESSAGE_FOUNDSOCKS:   return "Socks5";
-    case SPEEDTEST_MESSAGE_FOUNDHTTP:    return "HTTP";
-    case SPEEDTEST_MESSAGE_FOUNDSNELL:   return "Snell";
-    default:                             return "-";
-    }
-}
-
 // Latency cell background. Light traffic-light tones so black text stays
 // readable: green < 800 ms, amber 800-1500 ms, red >= 1500 ms or N/A.
 void latencyBg(const std::string &ping, double &r, double &g, double &b)
@@ -215,7 +190,7 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     int name_w = name_text_w + flag_w + name_gap + name_lpad;
 
     int type_w = col_for("类型",
-                         [&](int i){ return protoLabel(nodes[i].linkType); }, 0);
+                         [&](int i){ return nodes[i].proxy_type.empty() ? std::string("-") : nodes[i].proxy_type; }, 0);
     // 单列延迟 — 已合并 HTTP/HTTPS 两列(2025-10),HTTPS generate_204 足以反映链路质量
     int ping_w = col_for("延迟",
                          [&](int i){ return formatPing(nodes[i].sitePing); }, 0);
@@ -326,8 +301,8 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
             plotText(png, font, fs, text_x, y, rest, TX, TY, TZ);
         }
 
-        // Type: plain centred black text.
-        cellText(col_x[2], col_x[3], yt, protoLabel(n.linkType), fs, TX, TY, TZ);
+        // Type: plain centred black text. proxy_type comes from the kernel.
+        cellText(col_x[2], col_x[3], yt, n.proxy_type.empty() ? std::string("-") : n.proxy_type, fs, TX, TY, TZ);
 
         // 延迟(HTTPS generate_204):红绿灯背景 + 黑色文字
         {

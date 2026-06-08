@@ -32,12 +32,10 @@ std::string user_agent_str =
 
 static inline void curl_init()
 {
-    static bool init = false;
-    if(!init)
-    {
-        curl_global_init(CURL_GLOBAL_ALL);
-        init = true;
-    }
+    // call_once so concurrent first-callers (e.g. the background mihomo update
+    // check racing the main thread's first webGet) can't double-init libcurl.
+    static std::once_flag init_flag;
+    std::call_once(init_flag, [](){ curl_global_init(CURL_GLOBAL_ALL); });
 }
 
 static int writer(char *data, size_t size, size_t nmemb, std::string *writerData)

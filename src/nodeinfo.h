@@ -9,7 +9,15 @@
 
 struct nodeInfo
 {
-    int linkType = -1;
+    // Protocol type string reported by the mihomo kernel (e.g. "Vless",
+    // "Trojan", "Hysteria2"). Filled from /providers/proxies after the kernel
+    // parses the subscription, so new protocols need no C++ changes to display.
+    std::string proxy_type;
+    // Transient (subscription-load only): the verbatim unit handed to the
+    // kernel — either a single-proxy Clash YAML block or a raw share link.
+    // is_link_unit distinguishes the two so providers are split correctly.
+    std::string raw_unit;
+    bool is_link_unit = false;
     int id = -1;
     int groupID = -1;
     bool online = false;

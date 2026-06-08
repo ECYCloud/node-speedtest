@@ -8,18 +8,27 @@ export default function ResultsPanel() {
   const running = status === "running";
 
   // 当前正在测试的节点的实时进度:gPing 是 HTTPS 延迟(秒)。
-  // 实时速度从 rawSocketSpeed 取最近一个非零采样点（后端每 0.5s 写一格，
-  // 折算为字节/秒的瞬时速度）；dspeed 是从开始到此刻的累计平均，慢启动期会被拉低，
-  // 不适合当"实时"展示。
+  // 实时速度策略:rawSocketSpeed 是后端每 0.5s 一格的瞬时采样(字节/秒),代理网络
+  // 在 TLS 握手/慢启动/丢包重传时单格波动可达 10 倍。直接取最后一格瞬时会显得
+  //   实时速度 ≪ 最高速度
+  // ——其实是 0.5s 颗粒度 + 网络抖动的真实表现,但反直觉。
+  // 改取最近 4 格(2s)非零采样的均值,平掉单格抖动,数值更贴近代理真实带宽。
+  // 全为零(刚启动/已停)时返回 0,保持"--"占位。
   const cur = current && current.remarks ? current : null;
   const curPing = cur?.gPing ?? 0;
   const rawSpeeds = cur?.rawSocketSpeed ?? [];
   let curSpeed = 0;
-  for (let i = rawSpeeds.length - 1; i >= 0; i--) {
-    if (rawSpeeds[i] > 0) {
-      curSpeed = rawSpeeds[i];
-      break;
+  {
+    const SLIDING_WINDOW = 4; // 4 × 0.5s = 2s
+    let sum = 0;
+    let count = 0;
+    for (let i = rawSpeeds.length - 1; i >= 0 && count < SLIDING_WINDOW; i--) {
+      if (rawSpeeds[i] > 0) {
+        sum += rawSpeeds[i];
+        count++;
+      }
     }
+    if (count > 0) curSpeed = sum / count;
   }
 
   return (

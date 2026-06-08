@@ -1,0 +1,20 @@
+mixed-port: 0
+socks-port: 65432
+allow-lan: false
+bind-address: '127.0.0.1'
+mode: global
+log-level: warning
+ipv6: true
+external-controller: '127.0.0.1:9990'
+secret: ''
+proxy-providers:
+  link_sub:
+    type: file
+    path: ./sub_link.txt
+    health-check:
+      enable: false
+proxy-groups:
+  - name: GLOBAL
+    type: select
+    use:
+      - link_sub

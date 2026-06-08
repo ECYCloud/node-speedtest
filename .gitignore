@@ -25,6 +25,9 @@ config.yaml
 config.json
 results/
 
+# 例外:engine-assets 下的 config.yaml 是 mihomo 配置模板,必须进仓库供 CI 使用
+!separated/desktop/engine-assets/config.yaml
+
 # CI artifact downloads and locally assembled release bundles
 artifacts/
 stairspeedtest-mihomo-*/

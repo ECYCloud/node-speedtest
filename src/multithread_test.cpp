@@ -22,6 +22,17 @@
 
 using namespace std::chrono;
 
+// /web 模式下的"立刻打断"信号:webgui_wrapper.cpp 在 POST /stop 时把它置 true。
+// perform_test / upload_test 的累积循环每 500ms-1000ms 检查一次,true 就立刻 break,
+// 然后 EXIT_FLAG=true 让所有 worker socket 读写循环也退出。
+// CLI 模式不编 webgui_wrapper.cpp,该变量不存在,helper 永远返回 false,无副作用。
+#ifdef BUILD_WEBSERVER_ENGINE
+extern std::atomic<bool> stop_requested;
+static inline bool wantStopNow() { return stop_requested.load(); }
+#else
+static inline bool wantStopNow() { return false; }
+#endif
+
 std::queue<SOCKET> opened_socket;
 
 #define MAX_FILE_SIZE 512*1024*1024
@@ -393,6 +404,14 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
                  + ", current received bytes: " + std::to_string(this_bytes) + ".");
         if(!running)
             break;
+        // 用户在测速过程中点了停止 → 立刻跳出累积循环,后续 EXIT_FLAG=true
+        // 会让所有 worker 的 socket 循环也退出。已采集的 rawSpeed/avgSpeed
+        // 保留,方便用户看到部分结果。
+        if(wantStopNow())
+        {
+            writeLog(LOG_TYPE_FILEDL, "Stop requested, breaking download accumulation loop.");
+            break;
+        }
         draw_progress_dl(i, this_bytes);
     }
     std::cerr<<std::endl;
@@ -490,6 +509,12 @@ int upload_test(nodeInfo &node, std::string localaddr, int localport, std::strin
                  + ", current sent bytes: " + std::to_string(this_bytes) + ".");
         if(!running)
             break;
+        // 同 perform_test:停止信号到 → 立刻跳出上传累积循环。
+        if(wantStopNow())
+        {
+            writeLog(LOG_TYPE_FILEUL, "Stop requested, breaking upload accumulation loop.");
+            break;
+        }
         draw_progress_ul(i, this_bytes);
     }
     std::cerr<<std::endl;

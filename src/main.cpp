@@ -807,6 +807,18 @@ int singleTest(nodeInfo &node)
     cur_node_id = node.id;
     std::string id = std::to_string(node.id + (rpcmode ? 0 : 1));
 
+#ifdef BUILD_WEBSERVER_ENGINE
+    // 入口快速退出:用户已经按了停止 → 不为这个节点启动任何探测
+    // (延迟/GeoIP/NAT/下载),直接走完函数尾部由 batchTest 跳出循环。
+    // singleTest 内部各个阻塞点(perform_test 累积循环)也单独检查 stop_requested,
+    // 这里只是把"已经停了还要新开节点测试"的浪费提前到第一行就消除。
+    if(stop_requested.load())
+    {
+        writeLog(LOG_TYPE_INFO, "Stop requested before node start, skipping: " + node.remarks);
+        return SPEEDTEST_ERROR_NONE;
+    }
+#endif
+
     writeLog(LOG_TYPE_INFO, "Received server. Group: " + node.group + " Name: " + node.remarks);
     defer(printMsg(SPEEDTEST_MESSAGE_GOTRESULT, rpcmode, node.avgSpeed, node.maxSpeed, node.ulSpeed, node.pkLoss, node.avgPing, node.sitePing, node.natType.get());)
     auto start = steady_clock::now();

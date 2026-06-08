@@ -378,6 +378,15 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
     writeLog(LOG_TYPE_FILEDL, "All threads launched. Start accumulating data.");
     auto start = steady_clock::now();
     unsigned long long transferred_bytes = 0, this_bytes = 0, cur_recv_bytes = 0, max_speed = 0;
+    // 峰值速度规范化:对齐 Speedtest/Cloudflare/LibreSpeed 的标准做法,用滑动窗口
+    // 均值的历史最大值作为"最高速度",而不是单 0.5s 瞬时最大值。
+    //   * 单点瞬时最大易被 TSO 聚合、慢启动末期 cwnd 翻倍、丢包后 RTO 大窗口重传等
+    //     抖动"虚高"拉到代表不了节点真实带宽的尖峰
+    //   * 与前端展示的"实时速度"(同样 2s 滑动均值)保持同尺度,语义对齐:
+    //         maxSpeed = 历史所有 2s 窗口均值 max
+    //         curSpeed = 最近 2s 窗口均值
+    //     永远 maxSpeed >= curSpeed,且两者可直接比较
+    constexpr int kPeakWindow = 4; // 4 × 0.5s = 2s
     for(i = 1; i < 21; i++)
     {
         sleep(500); //accumulate data
@@ -386,10 +395,17 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
         transferred_bytes = cur_recv_bytes;
 
         node.rawSpeed[i - 1] = this_bytes;
-        // 最高速度 = 所有 0.5s 瞬时采样点中的最大值。
-        // 与前端"实时速度"读取的 rawSpeed 完全同源，保证 maxSpeed ≥ 任意实时值。
-        // 旧实现取相邻两点平均再求最大，会让"最高"反而 < "实时峰值"，语义矛盾。
-        max_speed = std::max(max_speed, this_bytes);
+        // 计算覆盖到当前采样点的 2s 滑动窗口均值。前 1-3 个采样点窗口未填满时
+        // 用现有数据均值(避免被 0 拉低,前几格也参与得到最大值就是 OK 的)。
+        {
+            int win_begin = (i - 1) - (kPeakWindow - 1);
+            if(win_begin < 0) win_begin = 0;
+            unsigned long long win_sum = 0;
+            int win_n = (i - 1) - win_begin + 1;
+            for(int k = win_begin; k <= i - 1; ++k) win_sum += node.rawSpeed[k];
+            unsigned long long win_avg = win_sum / win_n;
+            max_speed = std::max(max_speed, win_avg);
+        }
         // 实时更新已下载量/平均/最高速度，供 web 模式轮询 /getresults 时展示实时进度。
         // 否则这些字段要等下载循环全部结束才一次性赋值，前端实时速度列只能显示 "--"。
         {

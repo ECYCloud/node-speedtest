@@ -191,14 +191,16 @@ export const useTest = create<TestStore>((set, get) => ({
     }
   },
 
-  /** 停止测试:重启后端进程(后端无 /stop 接口)。 */
+  /** 停止测试:发 POST /stop,后端在 batchTest 节点循环间检测到 stop_requested 后跳出,
+      保留 allNodes/targetNodes,用户可立即点"开始"重测同一份订阅。
+      旧实现走 Tauri 命令 restart_backend 杀后端进程,会清空内存里的节点列表 →
+      再点开始 0 节点,表现为"任何节点都无法测试"。 */
   async stopTest() {
     set({ status: "stopped", current: null });
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("restart_backend");
+      await api.stop();
     } catch {
-      /* 重启失败也不影响前端把 status 设为 stopped */
+      /* 即便请求失败前端 status 已切换,polling 会按后端真实状态再校正 */
     }
   },
 

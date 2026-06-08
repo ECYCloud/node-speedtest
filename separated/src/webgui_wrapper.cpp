@@ -17,6 +17,12 @@
 
 std::atomic<bool> start_flag = false;
 std::atomic<time_t> done_time = 0;
+// 节点级中断信号:前端 POST /stop → 置 true → main.cpp::batchTest 在每个节点开始前检查,
+// true 就 break 出循环并保留已测结果。/start 启动新一轮测速时复位为 false。
+// 注意:单节点正在下载阶段无法立刻打断(没改 webget/socket 的循环),最多等当前节点结束。
+// 这是"杀后端进程"路线被替换后的核心 —— 进程不再被杀,allNodes/targetNodes 全程保留,
+// 用户停止后再点开始可以无缝复用同一份订阅与 mihomo outbound,不会再出现"任何节点都无法测试"。
+std::atomic<bool> stop_requested = false;
 
 //variables from main
 extern std::vector<nodeInfo> allNodes;
@@ -326,6 +332,8 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         std::thread t([=]()
         {
             start_flag = true;
+            // 复位上一轮残留的中断信号,确保新一轮 batchTest 不会在第一节点就被 break。
+            stop_requested = false;
             // 顶层兜底:测速链路里任何一步抛异常(尤其 rapidjson 的 RAPIDJSON_ASSERT
             // 被重定义为 throw runtime_error —— GeoIP/内核返回非预期 JSON 时会触发),
             // 若不捕获就会让这个 detached 线程 terminate 掉整个后端进程,表现为"无法测试"。
@@ -363,6 +371,20 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         t.detach();
         response.status_code = 202;
         return "running";
+    });
+
+    // 节点级停止:置 stop_requested = true,batchTest 当前节点跑完后跳出循环。
+    // 同时把 done_time 清零,避免 /start 的"5 秒冷却"误挡停止后立刻重测。
+    // 不杀后端进程 —— allNodes/targetNodes/mihomo outbound 全保留,再点开始可无缝继续。
+    append_response("POST", "/stop", "text/plain", [](RESPONSE_CALLBACK_ARGS) -> std::string
+    {
+        (void)request;
+        if(!start_flag)
+            return "stopped";
+        stop_requested = true;
+        done_time = 0;
+        response.status_code = 202;
+        return "stopping";
     });
 
     append_response("GET", "/getresults", "text/plain;charset=utf-8", [](RESPONSE_CALLBACK_ARGS) -> std::string

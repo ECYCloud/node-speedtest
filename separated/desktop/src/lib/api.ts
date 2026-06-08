@@ -112,5 +112,8 @@ export const api = {
     apiPostFile<NodeConfig[]>("/readfileconfig", fileName, fileBytes),
   start: (params: StartParams) =>
     apiPostJson<string>("/start", params, false),
+  // 节点级停止:后端把 stop_requested 置 true,batchTest 当前节点跑完后跳出循环。
+  // 不杀后端进程,allNodes/targetNodes 全程保留,再点开始可无缝继续。
+  stop: () => apiPostJson<string>("/stop", {}, false),
   results: () => apiGet<ResultsPayload>("/getresults"),
 };

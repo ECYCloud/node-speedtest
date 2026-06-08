@@ -43,6 +43,7 @@ std::string sub_url;
 bool pause_on_done = true;
 
 #ifdef BUILD_WEBSERVER_ENGINE
+#include <atomic>
 // Webserver 引擎模式(供 Tauri 桌面端 sidecar 使用):/web 启动后通过 HTTP 接口
 // 暴露 /readsubscriptions /start /getresults 等路由,由 webgui_wrapper.cpp 实现。
 // CLI 构建(默认)下整个 BUILD_WEBSERVER_ENGINE 段都不编译,二进制保持纯净。
@@ -50,6 +51,9 @@ bool webserver_mode = false;
 std::string listen_address = "127.0.0.1";
 int listen_port = 10870;
 void ssrspeed_webserver_routine(const std::string &listen_address, int listen_port);
+// /stop 路由把它置 true → batchTest 节点循环间检查 → 跳出 → 保留已测结果。
+// /start 启动新一轮时复位。CLI 模式根本编不到 batchTest 里的检查点,无副作用。
+extern std::atomic<bool> stop_requested;
 #endif
 
 //for use globally
@@ -1020,6 +1024,15 @@ void batchTest(std::vector<nodeInfo> &nodes)
         //then we start testing nodes
         for(auto &x : nodes)
         {
+#ifdef BUILD_WEBSERVER_ENGINE
+            // 前端 POST /stop 触发 → 当前节点跑完前不再启动下一个,直接跳出循环。
+            // 已测节点的结果(写入 nodes 里的字段)保留,后续 saveResult / 渲染照常。
+            if(stop_requested)
+            {
+                writeLog(LOG_TYPE_INFO, "Stop requested, breaking out of batch loop.");
+                break;
+            }
+#endif
             if(custom_group.size() != 0)
                 x.group = custom_group;
             singleTest(x);

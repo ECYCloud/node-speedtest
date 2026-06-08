@@ -1,35 +1,22 @@
 import { useTest } from "../../store/test";
 import { Badge, Card, SectionTitle } from "../../components/ui";
 import { fmtPingSeconds, fmtSpeed, fmtBytes } from "../../lib/format";
+import { computeCurSpeed, computeMaxSpeed } from "../../lib/speed";
 import { CheckCircle2, Activity, Inbox } from "lucide-react";
 
 export default function ResultsPanel() {
   const { results, current, status } = useTest();
   const running = status === "running";
 
-  // 当前正在测试的节点的实时进度:gPing 是 HTTPS 延迟(秒)。
-  // 实时速度策略:rawSocketSpeed 是后端每 0.5s 一格的瞬时采样(字节/秒),代理网络
-  // 在 TLS 握手/慢启动/丢包重传时单格波动可达 10 倍。直接取最后一格瞬时会显得
-  //   实时速度 ≪ 最高速度
-  // ——其实是 0.5s 颗粒度 + 网络抖动的真实表现,但反直觉。
-  // 改取最近 4 格(2s)非零采样的均值,平掉单格抖动,数值更贴近代理真实带宽。
-  // 全为零(刚启动/已停)时返回 0,保持"--"占位。
+  // 实时速度与最高速度都基于 rawSocketSpeed 数组用同一套滑动窗口算法在前端计算,
+  // 两者严格同源同尺度,UI 上"实时速度峰值"等于"本节点最高",不受 polling 抽样
+  // 频率影响 — 后端把 0.5s 全量采样保留在数组里,前端拿到数组就拿到全部历史。
+  // 详见 lib/speed.ts。
   const cur = current && current.remarks ? current : null;
   const curPing = cur?.gPing ?? 0;
-  const rawSpeeds = cur?.rawSocketSpeed ?? [];
-  let curSpeed = 0;
-  {
-    const SLIDING_WINDOW = 4; // 4 × 0.5s = 2s
-    let sum = 0;
-    let count = 0;
-    for (let i = rawSpeeds.length - 1; i >= 0 && count < SLIDING_WINDOW; i--) {
-      if (rawSpeeds[i] > 0) {
-        sum += rawSpeeds[i];
-        count++;
-      }
-    }
-    if (count > 0) curSpeed = sum / count;
-  }
+  const curRaw = cur?.rawSocketSpeed;
+  const curSpeed = computeCurSpeed(curRaw);
+  const curMaxSpeed = computeMaxSpeed(curRaw);
 
   return (
     <Card className="p-5 flex flex-col">
@@ -59,8 +46,8 @@ export default function ResultsPanel() {
       </SectionTitle>
 
       {running && cur && (
-        <div className="mb-3 px-4 py-3 rounded-lg bg-primary/5 border border-primary/20 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-          <div className="md:col-span-1 min-w-0">
+        <div className="mb-3 px-4 py-3 rounded-lg bg-primary/5 border border-primary/20 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div className="col-span-2 md:col-span-1 min-w-0">
             <div className="text-fg-muted text-xs mb-0.5">正在测试</div>
             <div className="font-medium truncate">{cur.remarks}</div>
           </div>
@@ -74,6 +61,12 @@ export default function ResultsPanel() {
             <div className="text-fg-muted text-xs mb-0.5">实时速度</div>
             <div className="font-medium tabular-nums">
               {curSpeed > 0 ? fmtSpeed(curSpeed) : "--"}
+            </div>
+          </div>
+          <div>
+            <div className="text-fg-muted text-xs mb-0.5">本节点最高</div>
+            <div className="font-medium tabular-nums">
+              {curMaxSpeed > 0 ? fmtSpeed(curMaxSpeed) : "--"}
             </div>
           </div>
         </div>
@@ -118,7 +111,11 @@ export default function ResultsPanel() {
                     {fmtSpeed(r.dspeed)}
                   </td>
                   <td className="py-2 px-3 font-medium tabular-nums">
-                    {fmtSpeed(r.dspeedMax ?? 0)}
+                    {/* 与"实时速度"同源:基于 rawSocketSpeed 用同一套滑动窗口算法,
+                        而非读后端 dspeedMax 字段。已完成节点的 rawSpeed 数组是终态,
+                        前后端基于同份数据算结果数学等价;但前端同源能保证测速过程中
+                        实时进度区"本节点最高"与表格列字面值严格一致。 */}
+                    {fmtSpeed(computeMaxSpeed(r.rawSocketSpeed))}
                   </td>
                   <td className="py-2 px-3 text-fg-muted tabular-nums">
                     {fmtBytes(r.trafficUsed)}

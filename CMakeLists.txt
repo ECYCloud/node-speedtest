@@ -68,8 +68,13 @@ IF(BUILD_WEBSERVER_ENGINE)
 	TARGET_COMPILE_DEFINITIONS(stairspeedtest PRIVATE BUILD_WEBSERVER_ENGINE)
 	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/separated/src)
 	PKG_CHECK_MODULES(LIBEVENT libevent REQUIRED)
-	INCLUDE_DIRECTORIES(${LIBEVENT_INCLUDE_DIRS})
-	LINK_DIRECTORIES(${LIBEVENT_LIBRARY_DIRS})
+	TARGET_INCLUDE_DIRECTORIES(stairspeedtest PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+	# 用 target_link_directories 而不是顶级 LINK_DIRECTORIES。后者是目录级属性,
+	# 只对它之后才定义的 target 生效;stairspeedtest target 在更前面已经 add_executable,
+	# 顶级 LINK_DIRECTORIES 对它无效。这在 macOS Homebrew(/opt/homebrew/lib 不在默认
+	# 搜索路径)上会导致 ld 报 'library event not found',Linux/Windows 因为
+	# libevent 在系统默认路径里偶然蒙对。
+	TARGET_LINK_DIRECTORIES(stairspeedtest PRIVATE ${LIBEVENT_LIBRARY_DIRS})
 	TARGET_LINK_LIBRARIES(stairspeedtest ${LIBEVENT_LIBRARIES})
 ENDIF()
 

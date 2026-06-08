@@ -117,6 +117,7 @@ jobs:
 
       - name: Assemble distribution
         run: |
+          rm -rf dist
           cp -r base dist
           cp build/stairspeedtest.exe dist/
           # Bundle every non-system DLL the exe imports, from /mingw64/bin
@@ -193,6 +194,7 @@ jobs:
 
       - name: Assemble distribution
         run: |
+          rm -rf dist
           cp -r base dist
           cp build/stairspeedtest dist/
           # Copy every non-system dylib next to the binary and rewrite the

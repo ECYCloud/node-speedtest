@@ -50,5 +50,5 @@ g++ -o base/stairspeedtest CMakeFiles/stairspeedtest.dir/src/*.o -static \
     -Wl,--end-group \
     -ldl -lpthread -O3 -s
 
-chmod +rx base/stairspeedtest base/*.sh
+chmod +rx base/stairspeedtest
 chmod +r base/*

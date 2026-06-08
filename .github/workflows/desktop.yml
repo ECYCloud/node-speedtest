@@ -1,0 +1,162 @@
+name: Desktop release build
+# Tauri 桌面端 GUI 客户端打包流水线。
+# 流程:在 windows-latest 上用 MSYS2 编 C++ webserver 引擎(开 BUILD_WEBSERVER_ENGINE=ON),
+# 装配 src-tauri/engine/(引擎 exe + DLL + mihomo + 字体 + 配置模板),
+# 然后用 npm run tauri build 出 NSIS 安装包,在 tag 推送时挂到同一个 Release。
+#
+# 当前只构建 Windows 桌面端。macOS / Linux 桌面端的 sidecar 引擎链路目前在 lib.rs 里
+# 主要是 Windows 路径(taskkill / DETACHED_PROCESS 等),未在 CI 上验证过。
+# 三平台桌面 GUI 上线需要单独的工作量,后续按需追加 job。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  windows_desktop:
+    name: Windows desktop (Tauri NSIS)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # ---------- 1. 用 MSYS2 编 C++ webserver 引擎 ----------
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel git unzip
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-yaml-cpp
+            mingw-w64-x86_64-libevent
+            mingw-w64-x86_64-pcre2
+            mingw-w64-x86_64-rapidjson
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-freetype
+            mingw-w64-x86_64-harfbuzz
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-bzip2
+
+      - name: Read mihomo version from version.h
+        id: ver
+        shell: msys2 {0}
+        run: |
+          MV=$(grep MIHOMO_FALLBACK_VERSION src/version.h | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+          echo "mihomo=$MV" >> "$GITHUB_OUTPUT"
+
+      - name: Build PNGwriter from source
+        shell: msys2 {0}
+        run: |
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64 \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j
+          cmake --install /tmp/pngwriter/build
+
+      - name: Build C++ engine with /web mode
+        shell: msys2 {0}
+        run: |
+          # BUILD_WEBSERVER_ENGINE=ON 让 stairspeedtest.exe 同时支持 CLI 与 /web HTTP 服务,
+          # Tauri 主进程通过 spawn `stairspeedtest.exe /web` 拉起后端
+          cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_WEBSERVER_ENGINE=ON
+          cmake --build build -j
+
+      # ---------- 2. 装配 src-tauri/engine/ ----------
+      - name: Assemble engine directory
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          ENGINE=separated/desktop/src-tauri/engine
+          rm -rf "$ENGINE"
+          mkdir -p "$ENGINE/tools/clients" "$ENGINE/tools/misc"
+
+          # 引擎 exe
+          cp build/stairspeedtest.exe "$ENGINE/"
+
+          # 链接所需的 DLL(从 mingw64/bin 拷)
+          ldd build/stairspeedtest.exe \
+            | awk '{print $3}' | grep -i '^/mingw64/bin/' | sort -u \
+            | xargs -I{} cp {} "$ENGINE/"
+
+          # 字体(渲染结果图必需)
+          cp base/tools/misc/SourceHanSansCN-Medium.otf "$ENGINE/tools/misc/"
+          cp base/tools/misc/TwemojiFlat.ttf "$ENGINE/tools/misc/"
+
+          # 运行时配置 + 默认订阅占位(模板)
+          cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
+          cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
+          cp base/pref.ini "$ENGINE/"
+
+          # mihomo 内核
+          MV=${{ steps.ver.outputs.mihomo }}
+          curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-windows-amd64-$MV.zip"
+          unzip -o "mihomo-windows-amd64-$MV.zip" -d /tmp/mihomo
+          cp /tmp/mihomo/mihomo-windows-amd64*.exe "$ENGINE/tools/clients/mihomo.exe"
+
+          ls -la "$ENGINE"
+
+      # ---------- 3. 前端 + Tauri 打 NSIS ----------
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: separated/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            separated/desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-tauri-${{ hashFiles('separated/desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install npm deps
+        working-directory: separated/desktop
+        run: npm ci
+
+      - name: Tauri build (NSIS)
+        working-directory: separated/desktop
+        run: npm run tauri build
+
+      # ---------- 4. 上传产物 ----------
+      - name: Locate NSIS installer
+        id: locate
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem separated/desktop/src-tauri/target/release/bundle/nsis/*.exe |
+                 Select-Object -First 1
+          if (-not $exe) { throw "NSIS installer not produced" }
+          "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($exe.Name)"     >> $env:GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: stair-speedtest-windows-desktop
+          path: ${{ steps.locate.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.locate.outputs.path }}
+          draft: true

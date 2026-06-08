@@ -29,6 +29,13 @@ results/
 artifacts/
 stairspeedtest-mihomo-*/
 
+# Local build output / staging directories (Vite / Tauri / CI assemble step)
+dist/
+separated/desktop/dist/
+separated/desktop/src-tauri/target/
+separated/desktop/src-tauri/engine/
+**/tauri_build.log
+
 # Temporary mihomo process output files
 mihomo.out
 mihomo.err

@@ -74,7 +74,7 @@ export const useTest = create<TestStore>((set, get) => ({
   url: "",
   importTab: "sub",
   testMode: "ALL",
-  sortMethod: "REVERSE_SPEED",
+  sortMethod: "REVERSE_MAXSPEED",
 
   async loadSubscription(url) {
     set({ loadingConfigs: true, error: null });

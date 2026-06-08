@@ -251,7 +251,13 @@ export const useTest = create<TestStore>((set, get) => ({
 }));
 
 let polling = false;
-export function startPolling(intervalMs = 1200) {
+export function startPolling(intervalMs = 500) {
+  // 500ms 与后端 perform_test 累积循环 sleep(500) 完全对齐:后端每 0.5s 写一格
+  // rawSpeed 并刷新 maxSpeed/avgSpeed,前端按同频率拉就不会漏掉任何窗口快照,
+  // 用户观察到的"实时速度峰值"严格等于后端记录的"最高速度"。
+  // 旧值 1200ms 会让前端只看到后端 ~一半的窗口,峰值若落在 polling 间隙就会
+  // 永远看不到 → 体感"最高速度比观察到的实时峰值高几个百分点"。
+  // 后端 /getresults 是本地 HTTP,~kB 级响应,500ms 频率没压力。
   if (polling) return;
   polling = true;
   const tick = async () => {

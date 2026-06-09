@@ -88,39 +88,69 @@ fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
         let src = bundled_engine_dir(app)?;
         let dst = runtime_engine_dir(app)?;
         let src_exe = src.join(ENGINE_EXE);
-        let dst_exe = dst.join(ENGINE_EXE);
 
-        // 取 (size, mtime) 作为指纹,任一不同就重新同步
-        let fingerprint = |p: &std::path::Path| -> Option<(u64, std::time::SystemTime)> {
-            let m = std::fs::metadata(p).ok()?;
-            Some((m.len(), m.modified().ok()?))
-        };
-
-        // 关键资产 sentinel:这些文件缺一个就视为 runtime 不完整,必须重同步
-        let sentinels = [
+        // 关键资产 sentinel:任意一个缺失视作 runtime 不完整,必须重同步。
+        // 涵盖 mihomo / 字体 / config / pref,以及 Linux 上引擎依赖捆进来的核心 .so —
+        // 老版本 deb 没有这些 .so,新版本检测到缺失就强制全量重写。
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut sentinels: Vec<std::path::PathBuf> = vec![
             std::path::PathBuf::from("tools/clients").join(MIHOMO_EXE),
             std::path::PathBuf::from("tools/misc/SourceHanSansCN-Medium.otf"),
             std::path::PathBuf::from("config.yaml"),
             std::path::PathBuf::from("pref.ini"),
         ];
-        let runtime_complete = sentinels.iter().all(|rel| dst.join(rel).exists());
+        #[cfg(target_os = "linux")]
+        {
+            sentinels.extend([
+                std::path::PathBuf::from("libyaml-cpp.so.0.7"),
+                std::path::PathBuf::from("libpcre2-8.so.0"),
+                std::path::PathBuf::from("libcurl.so.4"),
+            ]);
+        }
 
-        if runtime_complete {
-            if let (Some(a), Some(b)) = (fingerprint(&src_exe), fingerprint(&dst_exe)) {
-                if a == b {
-                    return Ok(()); // 完整且 exe 指纹一致,无需同步
-                }
-            }
+        // 版本指纹:CARGO_PKG_VERSION + bundled stairspeedtest 的 (size, mtime)。
+        // 同 tag 重发因 mtime 变化也会触发重同步;Tauri std::fs::copy 不保留 mtime,
+        // 用文件持久化比"对比 dst exe mtime"更可靠。
+        let want_sig = compute_engine_signature(&src_exe);
+        let sig_path = dst.join(".runtime_fingerprint");
+        let have_sig = std::fs::read_to_string(&sig_path).ok();
+
+        let runtime_complete = sentinels.iter().all(|rel| dst.join(rel).exists());
+        if runtime_complete && have_sig.as_deref() == Some(want_sig.as_str()) {
+            return Ok(());
         }
 
         std::fs::create_dir_all(&dst).map_err(|e| format!("创建运行时目录失败: {e}"))?;
-        // 只同步只读资产,跳过用户数据(logs / results / cache.db)
+        // 跳过用户数据 logs/results,其他全量覆盖
         copy_dir_excluding(&src, &dst, &["logs", "results"])?;
         let _ = std::fs::create_dir_all(dst.join("logs"));
         let _ = std::fs::create_dir_all(dst.join("results"));
-        // 旧 cache.db 不会清,mihomo 会自己处理过期条目
+        let _ = std::fs::write(&sig_path, &want_sig);
         Ok(())
     }
+}
+
+/// 计算 bundled stairspeedtest 主程序的版本指纹,用作 runtime engine 是否需要重同步的判定。
+#[cfg(not(debug_assertions))]
+fn compute_engine_signature(src_exe: &std::path::Path) -> String {
+    let (size, mtime) = match std::fs::metadata(src_exe) {
+        Ok(m) => {
+            let t = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            (m.len(), t)
+        }
+        Err(_) => (0, 0),
+    };
+    format!(
+        "v{} size={} mtime={}",
+        env!("CARGO_PKG_VERSION"),
+        size,
+        mtime
+    )
 }
 
 /// 递归复制目录,跳过指定子目录(按基名)

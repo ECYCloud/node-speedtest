@@ -90,7 +90,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 max-w-3xl">
+    <div className="flex flex-col gap-4">
       <Card className="p-5">
         <SectionTitle desc="后端进程异常或修改 pref.ini 后，可手动重启">
           后端进程

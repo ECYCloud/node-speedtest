@@ -72,7 +72,7 @@ function Sidebar({ active, onChange }: { active: View; onChange: (v: View) => vo
       </nav>
       <div className="mt-auto px-3 py-3 text-xs text-fg-muted flex items-center gap-2">
         <Sparkles size={14} />
-        <span>v0.1.1 · 桌面版</span>
+        <span>v{__APP_VERSION__} · 桌面版</span>
       </div>
     </aside>
   );

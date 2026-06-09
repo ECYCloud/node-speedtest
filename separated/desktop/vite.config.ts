@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import pkg from "./package.json" with { type: "json" };
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -11,6 +12,11 @@ export default defineConfig(async () => ({
 
   // Tauri release 模式下 webview origin 不是 /,资源必须用相对路径
   base: "./",
+
+  // 把 package.json 的 version 注入前端,避免硬编码后忘改
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

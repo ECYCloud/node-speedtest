@@ -5,3 +5,6 @@ declare module "*.ico" {
   const src: string;
   export default src;
 }
+
+// vite.config.ts 通过 define 注入,值来自 package.json
+declare const __APP_VERSION__: string;

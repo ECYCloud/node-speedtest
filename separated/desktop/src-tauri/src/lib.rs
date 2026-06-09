@@ -1140,6 +1140,18 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("[backend] 启动失败: {e}"),
             }
+            // 兜底:即使前端因 webkit/JS 异常没能调 show_main_window,
+            // 5 秒后主进程也强制让主窗口可见,避免"双击没反应"的体感。
+            let h_show = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                if let Some(w) = h_show.get_webview_window("main") {
+                    if !w.is_visible().unwrap_or(true) {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

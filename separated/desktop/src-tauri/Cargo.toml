@@ -1,6 +1,6 @@
 [package]
 name = "stair-speedtest"
-version = "0.1.0"
+version = "0.1.1"
 description = "Stair Speedtest 桌面版"
 authors = ["Stair Speedtest"]
 edition = "2021"

@@ -1040,6 +1040,26 @@ async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Linux 上 webkit2gtk 4.1 (2.46+) 在 Ubuntu 25.04 / Fedora 40+ / Wayland / 部分
+    // NVIDIA / 老 Intel iGPU 等环境组合下,默认开启的 DMABUF 渲染器 + GPU 合成存在
+    // 大量已知 bug,典型表现就是窗口黑屏 / 白屏 / 完全不显示(用户视角:"双击图标
+    // 没反应")。社区有两条非常成熟的 workaround,都是关掉对应渲染路径回退到软件
+    // 渲染,代价仅是少量性能损失,稳定性显著提升。相关 tauri-apps/tauri issue:
+    //   #5143  Ubuntu blank screen → WEBKIT_DISABLE_COMPOSITING_MODE=1
+    //   #13183 Manjaro NVIDIA 黑屏 → WEBKIT_DISABLE_DMABUF_RENDERER=1
+    //   #15050 Fedora 43 + Sway 黑屏(Wayland)
+    //   #13414 Ubuntu 25.04 GTK backend 初始化失败
+    //
+    // 这两条变量必须在创建 webview 前设好(Tauri::Builder 一旦初始化 webkit 就晚了),
+    // 所以放在 run() 最前面。仅 Linux 设置;其他平台不受影响。
+    // 用户已在环境里手动设置过任一变量时,std::env::set_var 仍幂等覆盖为 "1",
+    // 这与社区文档的推荐值一致,不会破坏用户的自定义。
+    #[cfg(target_os = "linux")]
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

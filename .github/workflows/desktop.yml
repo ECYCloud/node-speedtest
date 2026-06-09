@@ -338,12 +338,25 @@ jobs:
 
           cp build/stairspeedtest "$ENGINE/"
           chmod +x "$ENGINE/stairspeedtest"
-          # 把非系统 .so(/usr/lib/x86_64-linux-gnu/ 之外的)拷到 engine,改 RPATH=$ORIGIN
-          # libwebkit2gtk 等系统组件不拷,假定运行环境同样是 Ubuntu 22.04+ 的 glibc 链
-          ldd "$ENGINE/stairspeedtest" \
-            | awk '{print $3}' | grep -E '^/usr/local/lib/' | sort -u \
-            | xargs -I{} cp -L {} "$ENGINE/" || true
+
+          # 黑名单:glibc 内核 + 系统 GUI/图形/IPC 栈必须用系统的,其余全捆进 engine/。
+          SYS_LIB_RE='/(ld-linux[^/]*|libc|libm|libdl|libpthread|librt|libresolv|libnsl|libutil|libgcc_s|libstdc\+\+|libwayland-[a-z]+|libX[0-9A-Za-z]+|libxcb[^/]*|libxkb[^/]*|libdrm|libEGL|libGL|libOpenGL|libgbm|libgl[a-z]*|libgtk-3|libgdk-3|libgdk_pixbuf-2|libwebkit2gtk-[0-9.]+|libjavascriptcoregtk-[0-9.]+|libsoup-[0-9.]+|libpango[^/]*|libcairo[^/]*|libatk[^/]*|libepoxy|libglib-2|libgobject-2|libgio-2|libgmodule-2|libgthread-2|libdbus-1|libsystemd|libselinux|libudev)\.so'
+
+          mapfile -t BUNDLE_LIBS < <(
+            ldd "$ENGINE/stairspeedtest" \
+              | awk '/=> \// {print $3}' \
+              | grep -Ev "$SYS_LIB_RE" \
+              | sort -u
+          )
+          echo "Bundling ${#BUNDLE_LIBS[@]} runtime libs into engine/:"
+          printf '  %s\n' "${BUNDLE_LIBS[@]}"
+          cp -L -t "$ENGINE/" "${BUNDLE_LIBS[@]}"
+
+          # 二级依赖(libfreetype dlopen libpng 等)也走 $ORIGIN。
           patchelf --set-rpath '$ORIGIN' "$ENGINE/stairspeedtest"
+          for so in "$ENGINE"/*.so*; do
+            [ -f "$so" ] && [ ! -L "$so" ] && patchelf --set-rpath '$ORIGIN' "$so" || true
+          done
 
           cp base/tools/misc/SourceHanSansCN-Medium.otf "$ENGINE/tools/misc/"
           cp base/tools/misc/TwemojiFlat.ttf "$ENGINE/tools/misc/"

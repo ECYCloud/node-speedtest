@@ -91,13 +91,23 @@ cmake --build build -j
 
 ## 兼容性
 
-CI 验证矩阵(每次提交时都会运行):
+### 命令行 / Web 引擎(`stairspeedtest`)
+
+CI 每次提交都跑,三平台都过编译与冒烟测试:
 
 | 平台 | CPU | 操作系统 | 状态 |
 |------|-----|---------|------|
 | **Linux** | x86_64 | Ubuntu 24.04 | ✓ 已验证 |
 | **Windows** | x86_64 | 最新版 | ✓ 已验证 |
 | **macOS** | arm64 | 最新版 | ✓ 已验证 |
+
+### Tauri 桌面端(`separated/desktop/`)
+
+| 平台 | 安装包 | 状态 |
+|------|--------|------|
+| **Windows** x86_64 | NSIS (`.exe`) | ✓ 主分发渠道,长期验证 |
+| **Linux** x86_64 | `.deb` / `.AppImage` | ⚠️ 实验性,引擎依赖随包附带,GUI 依赖系统 webkit2gtk-4.1 |
+| **macOS** arm64 | `.dmg`(未签名) | ⚠️ 实验性,首次启动需在 Gatekeeper 中放行 |
 
 本项目通过 **[传统 build.yml](https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/actions/workflows/build.yml)** 为 Windows x86/x86_64 维护发布包(仅在打版本标签时触发)。这些构建包含完整的 mihomo 内核和运行时库。
 

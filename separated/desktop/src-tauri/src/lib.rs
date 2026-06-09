@@ -8,6 +8,17 @@ use tauri::{AppHandle, Manager, RunEvent, State};
 /// 后端进程统一监听地址,与 stairspeedtest pref.ini 的 [webserver] 默认值保持一致
 const BACKEND_URL: &str = "http://127.0.0.1:10870";
 
+/// 跨平台可执行文件名:Windows 带 .exe,Linux/macOS 无后缀。
+#[cfg(windows)]
+const ENGINE_EXE: &str = "stairspeedtest.exe";
+#[cfg(not(windows))]
+const ENGINE_EXE: &str = "stairspeedtest";
+
+#[cfg(windows)]
+const MIHOMO_EXE: &str = "mihomo.exe";
+#[cfg(not(windows))]
+const MIHOMO_EXE: &str = "mihomo";
+
 /// 持有后端子进程句柄,应用退出时统一收尾
 struct BackendState {
     child: Mutex<Option<Child>>,
@@ -76,8 +87,8 @@ fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
     {
         let src = bundled_engine_dir(app)?;
         let dst = runtime_engine_dir(app)?;
-        let src_exe = src.join("stairspeedtest.exe");
-        let dst_exe = dst.join("stairspeedtest.exe");
+        let src_exe = src.join(ENGINE_EXE);
+        let dst_exe = dst.join(ENGINE_EXE);
 
         // 取 (size, mtime) 作为指纹,任一不同就重新同步
         let fingerprint = |p: &std::path::Path| -> Option<(u64, std::time::SystemTime)> {
@@ -87,7 +98,7 @@ fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
 
         // 关键资产 sentinel:这些文件缺一个就视为 runtime 不完整,必须重同步
         let sentinels = [
-            std::path::PathBuf::from("tools/clients/mihomo.exe"),
+            std::path::PathBuf::from("tools/clients").join(MIHOMO_EXE),
             std::path::PathBuf::from("tools/misc/SourceHanSansCN-Medium.otf"),
             std::path::PathBuf::from("config.yaml"),
             std::path::PathBuf::from("pref.ini"),
@@ -140,11 +151,7 @@ fn copy_dir_excluding(src: &Path, dst: &Path, exclude: &[&str]) -> Result<(), St
 /// 这样它能就近找到 DLL、tools/、pref.ini、config.yaml。
 fn spawn_backend(app: &AppHandle) -> Result<Child, String> {
     let dir = engine_dir(app)?;
-    let exe = dir.join(if cfg!(windows) {
-        "stairspeedtest.exe"
-    } else {
-        "stairspeedtest"
-    });
+    let exe = dir.join(ENGINE_EXE);
     if !exe.exists() {
         return Err(format!("后端可执行文件不存在: {}", exe.display()));
     }
@@ -208,8 +215,18 @@ fn cleanup_orphans() {
     }
 }
 
+/// Linux/macOS 走 pkill -f,匹配命令路径(sidecar 用绝对路径起 mihomo)。
 #[cfg(not(windows))]
-fn cleanup_orphans() {}
+fn cleanup_orphans() {
+    for name in ["mihomo", "stairspeedtest"] {
+        let _ = Command::new("pkill")
+            .args(["-f", name])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
 
 // ===== 任务栏图标高分辨率修复 =====
 //
@@ -337,8 +354,8 @@ fn apply_high_res_icons(window: &tauri::WebviewWindow) {
 fn apply_high_res_icons(_window: &tauri::WebviewWindow) {}
 // ===== 任务栏图标高分辨率修复 end =====
 
-/// 在 Windows 上彻底清理后端进程及其子孙(mihomo 内核),避免孤儿进程。
-/// 直接 child.kill() 在 Windows 上是 TerminateProcess,不会清理子进程。
+/// 彻底清理后端进程及其子孙(mihomo 内核),避免孤儿。child.kill() 不递归,
+/// Windows 用 taskkill /T,Linux/macOS 用 pkill -P + pkill -f mihomo 兜底。
 fn kill_backend_tree(child: &mut Child) {
     let pid = child.id();
     let _ = child.kill();
@@ -356,7 +373,18 @@ fn kill_backend_tree(child: &mut Child) {
     }
     #[cfg(not(windows))]
     {
-        let _ = pid;
+        let _ = Command::new("pkill")
+            .args(["-P", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = Command::new("pkill")
+            .args(["-f", "mihomo"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -872,19 +900,8 @@ async fn self_check(app: AppHandle) {
     }
 }
 
-/// 下载 mihomo 内核新版本并替换 runtime engine 的 tools/clients/mihomo.exe。
-///
-/// 流程:
-///   1. 调 GitHub /releases/latest 拿 release 详情
-///   2. 在 assets 里挑 `mihomo-windows-amd64-compatible-v*.zip`(兼容老 CPU)
-///   3. 用 .no_proxy() reqwest 下载 zip(独立 client,timeout 5 分钟,16 MB 在慢网络也够)
-///   4. 解压,提取里面的 .exe(zip 内只有一个 mihomo-windows-amd64-compatible.exe)
-///   5. taskkill 可能在跑的 mihomo.exe(否则文件被锁无法替换)
-///   6. 备份原 mihomo.exe -> mihomo.exe.bak,写入新 exe
-///   7. 任一环节失败,从 .bak 还原,返回错误信息
-///
-/// 注意:只更新 runtime engine 目录(用户可写),bundled 目录(可能在 Program Files)
-/// 保持不动 —— 用户重装应用会回退,但卸载/重装本身就少见,且重装后再点一次更新即可。
+/// 下载最新 mihomo 内核覆盖 runtime engine 下的二进制(只动 user 可写目录,不动 bundle)。
+/// 资产按当前 OS+arch 选 zip(Windows)或 gz(Linux/macOS),失败时用 .bak 还原。
 #[derive(Serialize)]
 struct UpdateResult {
     success: bool,
@@ -896,18 +913,13 @@ struct UpdateResult {
 async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> {
     use std::io::Read;
 
-    // 独立的下载 client:5 分钟超时(16.7 MB 在慢网络/受限网络下足够)。
-    // 注意:**不要** .no_proxy() —— 国内访问 GitHub 资产域(objects.githubusercontent.com)
-    // 直连几乎必定被中间网关返回 504,只有走用户自己的系统代理才能成。这里用 reqwest 默认的
-    // 系统代理探测(读 HTTPS_PROXY / Windows 系统设置)。和 local_backend_client() 相反,
-    // 后者是访问 127.0.0.1 必须 .no_proxy(),公网请求则反过来。
+    // 不能 .no_proxy():国内直连 GitHub 资产域必走系统代理才能下载成功
     let dl_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .user_agent("stairspeedtest-reborn-desktop")
         .build()
         .map_err(|e| format!("创建下载 client 失败: {e}"))?;
 
-    // 1. 拿 release 详情
     let resp = dl_client
         .get("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest")
         .header("Accept", "application/vnd.github+json")
@@ -928,58 +940,60 @@ async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> 
         .ok_or("release 缺少 tag_name 字段")?
         .to_string();
 
-    // 2. 找 windows-amd64-compatible-v*.zip 资产
     let assets = release
         .get("assets")
         .and_then(|v| v.as_array())
         .ok_or("release 缺少 assets")?;
+
+    // 与 desktop.yml CI 装包时的资产命名保持一致,避免初装版与更新后版本不同源
+    let (asset_prefix, asset_ext): (&str, &str) =
+        if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+            ("mihomo-windows-amd64-", ".zip")
+        } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+            ("mihomo-windows-arm64-", ".zip")
+        } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            ("mihomo-linux-amd64-", ".gz")
+        } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+            ("mihomo-linux-arm64-", ".gz")
+        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            ("mihomo-darwin-amd64-", ".gz")
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            ("mihomo-darwin-arm64-", ".gz")
+        } else {
+            return Err("当前平台/架构不支持自动更新 mihomo".into());
+        };
+    let target_name = format!("{asset_prefix}{tag}{asset_ext}");
     let asset = assets
         .iter()
-        .find(|a| {
-            a.get("name")
-                .and_then(|n| n.as_str())
-                .map(|n| {
-                    n.starts_with("mihomo-windows-amd64-compatible-v") && n.ends_with(".zip")
-                })
-                .unwrap_or(false)
-        })
-        .ok_or("未在 release assets 中找到 windows-amd64-compatible 版本")?;
+        .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(target_name.as_str()))
+        .ok_or_else(|| format!("release 资产中未找到 {target_name}"))?;
     let download_url = asset
         .get("browser_download_url")
         .and_then(|v| v.as_str())
         .ok_or("asset 缺少 browser_download_url")?;
-    let asset_name = asset
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("mihomo.zip");
 
-    // 3. 下载 zip
-    let zip_resp = dl_client
+    let dl_resp = dl_client
         .get(download_url)
         .send()
         .await
-        .map_err(|e| format!("下载 {asset_name} 失败: {e}"))?;
-    if !zip_resp.status().is_success() {
-        let code = zip_resp.status();
-        // 504 是国内直连 GitHub 资产域的典型表现(中间网关上游超时),
-        // 给用户具体可执行的下一步,而不是干巴巴的 HTTP 状态码。
-        let hint = if code.as_u16() == 504 {
-            "(GitHub 资产域被中间网关超时拦截,请确认系统代理已开启,或点'手动下载'到浏览器跑)"
-        } else if code.as_u16() == 403 {
-            "(GitHub 速率限制或资产临时不可用,稍后重试或点'手动下载')"
-        } else {
-            ""
+        .map_err(|e| format!("下载 {target_name} 失败: {e}"))?;
+    if !dl_resp.status().is_success() {
+        let code = dl_resp.status();
+        let hint = match code.as_u16() {
+            504 => "(GitHub 资产域被中间网关超时,请确认系统代理已开启)",
+            403 => "(GitHub 速率限制或资产临时不可用,稍后重试)",
+            _ => "",
         };
         return Err(format!("下载返回 {code} {hint}"));
     }
-    let zip_bytes = zip_resp
+    let raw_bytes = dl_resp
         .bytes()
         .await
-        .map_err(|e| format!("读取 zip 数据失败: {e}"))?;
+        .map_err(|e| format!("读取响应数据失败: {e}"))?;
 
-    // 4. 解压,提取第一个 .exe(GitHub 当前 zip 包内只有一个)
-    let exe_bytes: Vec<u8> = {
-        let cursor = std::io::Cursor::new(zip_bytes.as_ref());
+    // zip 内有一个 mihomo* 二进制条目;gz 是裸二进制流
+    let bin_bytes: Vec<u8> = if asset_ext == ".zip" {
+        let cursor = std::io::Cursor::new(raw_bytes.as_ref());
         let mut archive = zip::ZipArchive::new(cursor)
             .map_err(|e| format!("zip 格式错误: {e}"))?;
         let mut buf: Option<Vec<u8>> = None;
@@ -987,48 +1001,81 @@ async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> 
             let mut entry = archive
                 .by_index(i)
                 .map_err(|e| format!("读取 zip 条目 {i} 失败: {e}"))?;
-            if entry.name().to_ascii_lowercase().ends_with(".exe") {
+            if entry.is_file() && entry.name().to_ascii_lowercase().contains("mihomo") {
                 let mut data = Vec::with_capacity(entry.size() as usize);
                 entry
                     .read_to_end(&mut data)
-                    .map_err(|e| format!("解压 .exe 失败: {e}"))?;
+                    .map_err(|e| format!("解压条目失败: {e}"))?;
                 buf = Some(data);
                 break;
             }
         }
-        buf.ok_or("zip 中未找到 .exe 文件")?
+        buf.ok_or("zip 中未找到 mihomo 二进制")?
+    } else {
+        let mut decoder = flate2::read::GzDecoder::new(raw_bytes.as_ref());
+        let mut data = Vec::new();
+        decoder
+            .read_to_end(&mut data)
+            .map_err(|e| format!("gz 解压失败: {e}"))?;
+        data
     };
 
-    // 5. 准备目标路径
     let dir = runtime_engine_dir(&app)?;
     let clients_dir = dir.join("tools").join("clients");
     if !clients_dir.exists() {
         return Err(format!("目标目录不存在: {}", clients_dir.display()));
     }
-    let mihomo_path = clients_dir.join("mihomo.exe");
-    let backup_path = clients_dir.join("mihomo.exe.bak");
+    let mihomo_path = clients_dir.join(MIHOMO_EXE);
+    let backup_path = clients_dir.join(format!("{MIHOMO_EXE}.bak"));
 
-    // 6. kill 在跑的 mihomo.exe(被 sidecar 拉起的子进程,文件被锁就无法替换)
+    // 文件被占用就无法覆盖写,先停掉在跑的 mihomo
     #[cfg(windows)]
     {
         let _ = silent_command("taskkill")
-            .args(["/F", "/IM", "mihomo.exe", "/T"])
+            .args(["/F", "/IM", MIHOMO_EXE, "/T"])
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("pkill")
+            .args(["-f", "mihomo"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status();
     }
     std::thread::sleep(std::time::Duration::from_millis(400));
 
-    // 7. 备份原文件
     if mihomo_path.exists() {
         std::fs::copy(&mihomo_path, &backup_path)
-            .map_err(|e| format!("备份原 mihomo.exe 失败: {e}"))?;
+            .map_err(|e| format!("备份原 {MIHOMO_EXE} 失败: {e}"))?;
     }
 
-    // 8. 写入新 exe;失败则用 .bak 还原
-    if let Err(e) = std::fs::write(&mihomo_path, &exe_bytes) {
+    if let Err(e) = std::fs::write(&mihomo_path, &bin_bytes) {
         if backup_path.exists() {
             let _ = std::fs::copy(&backup_path, &mihomo_path);
         }
-        return Err(format!("写入新 mihomo.exe 失败: {e}"));
+        return Err(format!("写入新 {MIHOMO_EXE} 失败: {e}"));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(
+            &mihomo_path,
+            std::fs::Permissions::from_mode(0o755),
+        );
+    }
+    // macOS 首次执行会被 Gatekeeper 拦,清掉下载来源标记
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("xattr")
+            .args(["-d", "com.apple.quarantine"])
+            .arg(&mihomo_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 
     Ok(UpdateResult {

@@ -106,8 +106,18 @@ CI 每次提交都跑,三平台都过编译与冒烟测试:
 | 平台 | 安装包 | 状态 |
 |------|--------|------|
 | **Windows** x86_64 | NSIS (`.exe`) | ✓ 主分发渠道,长期验证 |
-| **Linux** x86_64 | `.deb` / `.AppImage` | ⚠️ 实验性,引擎依赖随包附带,GUI 依赖系统 webkit2gtk-4.1 |
+| **Linux** x86_64 | `.deb` / `.AppImage` | ⚠️ 实验性,见下面平台说明 |
 | **macOS** arm64 | `.dmg`(未签名) | ⚠️ 实验性,首次启动需在 Gatekeeper 中放行 |
+
+**Linux 选哪个包**:
+
+| 发行版 | 推荐 | 原因 |
+|--------|------|------|
+| Ubuntu 22.04 / 24.04, Debian 12 | `.deb` | 系统自带 `libwebkit2gtk-4.1-0`,deb 体积小 |
+| **Ubuntu 25.04+, Fedora 40+, Arch** | **`.AppImage`** | 这些发行版主仓库已移除 webkit2gtk-4.1(切到 6.0,Tauri 2 暂未适配),`.deb` 装上也起不来;AppImage 自带 webkit runtime |
+| 其他 | 优先 AppImage | 自包含,无需考虑发行版差异 |
+
+AppImage 用法:`chmod +x Stair.Speedtest_*.AppImage && ./Stair.Speedtest_*.AppImage`
 
 本项目通过 **[传统 build.yml](https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/actions/workflows/build.yml)** 为 Windows x86/x86_64 维护发布包(仅在打版本标签时触发)。这些构建包含完整的 mihomo 内核和运行时库。
 

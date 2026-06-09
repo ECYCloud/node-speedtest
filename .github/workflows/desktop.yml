@@ -161,7 +161,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.locate.outputs.path }}
-          draft: true
+          draft: false
 
   # ============================================================
   # macOS arm64 (Apple Silicon) — DMG
@@ -280,7 +280,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.locate.outputs.path }}
-          draft: true
+          draft: false
 
   # ============================================================
   # Linux x86_64 — AppImage + deb
@@ -427,4 +427,4 @@ jobs:
           files: |
             ${{ steps.locate.outputs.appimage }}
             ${{ steps.locate.outputs.deb }}
-          draft: true
+          draft: false

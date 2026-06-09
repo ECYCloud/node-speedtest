@@ -211,6 +211,132 @@ fn cleanup_orphans() {
 #[cfg(not(windows))]
 fn cleanup_orphans() {}
 
+// ===== 任务栏图标高分辨率修复 =====
+//
+// 现象:应用启动几秒后,任务栏图标突然变模糊。
+//
+// 根因:Tauri 2.11.2 的 tauri-codegen 在编译期解析 bundle.icon 时,只读取 ICO 文件的
+// 第一个条目(`entries()[0]`)作为运行时窗口图标 RGBA 缓冲(官方 issue #14596 /
+// PR #15241,2.11.2 未修)。我们的 icon.ico 按惯例从小到大排列,第一个条目是 16x16,
+// 被 wry 通过 WM_SETICON 设给主窗口后,任务栏(需要 32/48 px)就只能从 16x16 上采样,
+// Alt-Tab、任务栏预览全部被替换成糊图。EXE 嵌入资源里的多分辨率 ICO 在窗口创建前
+// 一直被系统使用,所以"刚启动还清晰、过几秒变糊"。
+//
+// 修复:绕过 Tauri 内部那张 16x16 RGBA,在 setup 拿到主窗口 HWND 后,自己用 Win32
+// API 从完整的 ICO 字节里挑出最匹配 ICON_BIG/ICON_SMALL 期望尺寸的条目,
+// CreateIconFromResourceEx 创建 HICON,再 WM_SETICON 覆盖。这样:
+//   - ICON_BIG  ← 距离 SM_CXICON  最近的条目(任务栏 / Alt-Tab 用)
+//   - ICON_SMALL ← 距离 SM_CXSMICON 最近的条目(标题栏 / 任务管理器用)
+#[cfg(windows)]
+const APP_ICO_BYTES: &[u8] = include_bytes!("../icons/icon.ico");
+
+/// 在 ICO 字节流中按目标像素尺寸挑选最匹配的条目,返回其原始位图数据切片(可直接交给
+/// CreateIconFromResourceEx)。距离相同时偏好更大的条目,避免在小屏幕上被选到 16x16。
+#[cfg(windows)]
+fn pick_ico_entry(ico: &[u8], want: i32) -> Option<&[u8]> {
+    if ico.len() < 6 {
+        return None;
+    }
+    // ICONDIR: reserved(2) + type(2) + count(2)
+    let count = u16::from_le_bytes([ico[4], ico[5]]) as usize;
+    let dir_end = 6usize.checked_add(count.checked_mul(16)?)?;
+    if ico.len() < dir_end {
+        return None;
+    }
+    let mut best: Option<(i32, i32, usize, usize)> = None; // (-dist, side_sum, off, size)
+    for i in 0..count {
+        let o = 6 + i * 16;
+        // ICONDIRENTRY 中 0 表示 256
+        let w = if ico[o] == 0 { 256 } else { ico[o] as i32 };
+        let h = if ico[o + 1] == 0 { 256 } else { ico[o + 1] as i32 };
+        let size = u32::from_le_bytes([ico[o + 8], ico[o + 9], ico[o + 10], ico[o + 11]]) as usize;
+        let off = u32::from_le_bytes([ico[o + 12], ico[o + 13], ico[o + 14], ico[o + 15]]) as usize;
+        if off.checked_add(size).map_or(true, |end| end > ico.len()) {
+            continue;
+        }
+        let dist = (w - want).abs() + (h - want).abs();
+        let side = w + h;
+        // 排序 key:先按距离最小,再按尺寸最大(同距离取大,例如 want=32 时 32 优于 16)
+        let key = (-dist, side);
+        if best.map_or(true, |(d, s, _, _)| (key.0, key.1) > (d, s)) {
+            best = Some((key.0, key.1, off, size));
+        }
+    }
+    best.map(|(_, _, off, size)| &ico[off..off + size])
+}
+
+/// 给指定 HWND 重设 ICON_BIG / ICON_SMALL 为高分辨率版本。
+/// 注意:WM_SETICON 设置后图标的销毁由窗口生命周期负责,这里设完不能 DestroyIcon
+/// (否则系统再次绘制时拿到悬空句柄会画出空白/黑块)。
+#[cfg(windows)]
+fn apply_high_res_icons(window: &tauri::WebviewWindow) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateIconFromResourceEx, GetSystemMetrics, SendMessageW, ICON_BIG, ICON_SMALL,
+        LR_DEFAULTCOLOR, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, WM_SETICON,
+    };
+
+    // Tauri 依赖的 windows 0.61 中 HWND 是 *mut c_void 的 newtype,与 windows-sys 0.59
+    // 的 HWND(同样是 *mut c_void)二进制布局一致,直接 as 转即可。
+    let hwnd: HWND = match window.hwnd() {
+        Ok(h) => h.0 as HWND,
+        Err(e) => {
+            eprintln!("[icon] 获取主窗口 HWND 失败: {e}");
+            return;
+        }
+    };
+
+    unsafe {
+        // ICON_BIG: 任务栏 / Alt-Tab。SM_CXICON 在 100% DPI 下是 32,150% 是 48。
+        let want_big = GetSystemMetrics(SM_CXICON)
+            .max(GetSystemMetrics(SM_CYICON))
+            .max(32);
+        if let Some(entry) = pick_ico_entry(APP_ICO_BYTES, want_big) {
+            // 第三参数 fIcon=1 表示创建 icon(不是 cursor),
+            // 第四参数 dwVer=0x00030000 是 Windows 3.0+ 标准格式标记,固定值。
+            let h_big = CreateIconFromResourceEx(
+                entry.as_ptr(),
+                entry.len() as u32,
+                1, // TRUE = icon
+                0x0003_0000,
+                want_big,
+                want_big,
+                LR_DEFAULTCOLOR,
+            );
+            if !h_big.is_null() {
+                SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, h_big as isize);
+            } else {
+                eprintln!("[icon] CreateIconFromResourceEx(big) 返回 NULL");
+            }
+        }
+
+        // ICON_SMALL: 标题栏 / 任务管理器子窗口列表。SM_CXSMICON 通常 16/20/24。
+        let want_small = GetSystemMetrics(SM_CXSMICON)
+            .max(GetSystemMetrics(SM_CYSMICON))
+            .max(16);
+        if let Some(entry) = pick_ico_entry(APP_ICO_BYTES, want_small) {
+            let h_small = CreateIconFromResourceEx(
+                entry.as_ptr(),
+                entry.len() as u32,
+                1,
+                0x0003_0000,
+                want_small,
+                want_small,
+                LR_DEFAULTCOLOR,
+            );
+            if !h_small.is_null() {
+                SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, h_small as isize);
+            } else {
+                eprintln!("[icon] CreateIconFromResourceEx(small) 返回 NULL");
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_high_res_icons(_window: &tauri::WebviewWindow) {}
+// ===== 任务栏图标高分辨率修复 end =====
+
 /// 在 Windows 上彻底清理后端进程及其子孙(mihomo 内核),避免孤儿进程。
 /// 直接 child.kill() 在 Windows 上是 TerminateProcess,不会清理子进程。
 fn kill_backend_tree(child: &mut Child) {
@@ -242,9 +368,15 @@ fn backend_url() -> &'static str {
 /// 启动闪烁修复:tauri.conf.json 设了 visible:false,窗口启动时不可见,
 /// 等前端 React 完成首屏渲染后调这个命令把主窗口显示出来 + 设置焦点。
 /// 这样用户看到的第一帧就是渲染好的 splash / 主界面,不再经历"白屏 → 紫屏"的闪烁。
+///
+/// 同时在这里再调一次 apply_high_res_icons —— 修复 Tauri runtime 注入 16x16 RGBA
+/// 导致任务栏图标模糊的问题(详见 apply_high_res_icons 上方注释)。setup 已经设过
+/// 一次,这里再设一次是为了覆盖某些时序下 wry 可能在窗口 show 之前重新写入低分图标
+/// 的极端情况,确保用户看到的第一帧任务栏图标就是高分辨率版本。
 #[tauri::command]
 fn show_main_window(app: AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        apply_high_res_icons(&w);
         let _ = w.show();
         let _ = w.set_focus();
     }
@@ -928,6 +1060,12 @@ pub fn run() {
             write_startup_banner(&handle);
             // 后台跑 .no_proxy() 自检,把结果写到 app-startup.log
             tauri::async_runtime::spawn(self_check(handle.clone()));
+            // 修复任务栏图标模糊:Tauri 2.11.2 仅注入 ICO 第一个条目(我们这是 16x16),
+            // 这里在主窗口创建后立刻用 Win32 API 重设 ICON_BIG/ICON_SMALL 为高分辨率版本。
+            // 详见 apply_high_res_icons 上方的注释。
+            if let Some(w) = handle.get_webview_window("main") {
+                apply_high_res_icons(&w);
+            }
             match spawn_backend(&handle) {
                 Ok(c) => {
                     let state = handle.state::<BackendState>();

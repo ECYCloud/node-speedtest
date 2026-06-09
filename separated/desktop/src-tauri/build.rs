@@ -7,7 +7,7 @@ fn main() {
     let days = (now / 86400) as i64;
     let h = (now % 86400) / 3600;
     let m = (now % 3600) / 60;
-    let mut d = days + 719468;
+    let d = days + 719468;
     let era = if d >= 0 { d } else { d - 146096 } / 146097;
     let doe = (d - era * 146097) as u64;
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
@@ -17,7 +17,6 @@ fn main() {
     let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let mo = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
     let yr = if mo <= 2 { y + 1 } else { y };
-    let _ = d; // silence
     println!(
         "cargo:rustc-env=BUILD_TIME={:04}-{:02}-{:02} {:02}:{:02}",
         yr, mo, day, h, m

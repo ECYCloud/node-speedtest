@@ -26,6 +26,17 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["time", "rt"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
+# Windows 任务栏图标修复(WM_SETICON + CreateIconFromResourceEx),仅 Windows 编译。
+# 背景:Tauri 2.11.2 的 tauri-codegen 解析 bundle.icon 时只取 ICO 的 entries()[0],
+# 我们的 icon.ico 第一个条目是 16x16,被注入到主窗口后任务栏强制上采样到 32/48 就糊了
+# (官方 issue #14596 / PR #15241)。修复在 lib.rs 里 setup 时主动给 HWND 重设
+# ICON_BIG / ICON_SMALL,需要这套 Win32 API 绑定。
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 # 端到端验证 .no_proxy() 是否真的能绕过系统代理(examples/proxy_bypass_check.rs 用)
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

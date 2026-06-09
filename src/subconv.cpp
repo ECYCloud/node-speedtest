@@ -251,6 +251,17 @@ ProvidersBuild buildProvidersConfig(std::vector<nodeInfo> &nodes,
     cfg += "ipv6: true\n";
     cfg += "external-controller: '" + controller + "'\n";
     cfg += "secret: ''\n";
+    // 关键:开启 mihomo 统一延迟模式。
+    //   * mihomo 默认 /proxies/<name>/delay 内部只跑一次 HEAD 请求,start 取自
+    //     拨号前,t = HEAD 完成时刻 - 拨号前 → 延迟值包含完整 TCP/TLS/QUIC 握手开销,
+    //     绝对值会比真实 RTT 高 3-5 倍。
+    //   * unified-delay: true 时内核会跑两次 HEAD,第二次复用第一次的 keep-alive
+    //     连接,start 重置为第二次起点,**握手成本被完全抹掉**,得到的就是与
+    //     真实 RTT 一致的稳态延迟。
+    //   * 这是 Clash Verge Rev / Karing 等所有 mihomo 客户端默认开启的开关,
+    //     开启后我们的延迟数字才能与这些客户端可比、与节点真实延迟一致。
+    //   * 参见 mihomo 源码 adapter/adapter.go::URLTest 的 unifiedDelay 分支。
+    cfg += "unified-delay: true\n";
     if(!providers.empty())
     {
         cfg += "proxy-providers:\n" + providers;

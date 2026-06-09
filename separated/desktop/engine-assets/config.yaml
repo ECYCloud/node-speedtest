@@ -7,6 +7,7 @@ log-level: warning
 ipv6: true
 external-controller: '127.0.0.1:9990'
 secret: ''
+unified-delay: true
 proxy-providers:
   link_sub:
     type: file

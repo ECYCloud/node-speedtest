@@ -12,6 +12,7 @@ cmake_install.cmake
 Makefile
 build/
 build-web/
+build-engine/
 out/
 
 # Bundled mihomo kernel (downloaded separately, too large for git)

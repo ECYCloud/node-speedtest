@@ -624,7 +624,7 @@ int sitePing(nodeInfo &node, std::string localaddr, int localport, std::string u
 
 
     writeLog(LOG_TYPE_GPING, "Website ping started. Target: '" + target + "' . Proxy: '" + localaddr + ":" + std::to_string(localport) + "' .");
-    int loopcounter = 0, succeedcounter = 0, failcounter = 0;
+    int loopcounter = 0, succeedcounter = 0, failcounter = 0, totduration = 0;
     bool failed = true;
     while(loopcounter < times_to_ping)
     {
@@ -653,6 +653,7 @@ int sitePing(nodeInfo &node, std::string localaddr, int localport, std::string u
             {
                 succeedcounter++;
                 rawSitePing[loopcounter] = deltatime;
+                totduration += deltatime;
                 writeLog(LOG_TYPE_GPING, "Accessing '" + target + "' - Success - time=" + std::to_string(deltatime) + "ms");
             }
         )
@@ -716,36 +717,14 @@ int sitePing(nodeInfo &node, std::string localaddr, int localport, std::string u
     }
     std::cerr<<std::endl;
     std::move(std::begin(rawSitePing), std::end(rawSitePing), node.rawSitePing);
-    // 用"第二次成功"的 ping 作为最终上报值,而不是平均值。
-    //
-    // 站点 ping 走 SOCKS5 → mihomo → 节点 → 目标 HTTPS,即使我们每次新建 socket,
-    // mihomo 与远端节点之间的代理协议握手(vmess/vless/trojan/anytls/hysteria 的
-    // 初次握手 + 节点 → 目标站的 TLS 握手 + DNS 解析)在第一次会被冷启动一次,
-    // 后续 ping 因 mihomo 内部 keep-alive / TLS session resumption / DNS 缓存
-    // 而显著变快。把第一次拉进平均会让结果偏离稳态延迟,误导节点排序。
-    //
-    // 取第 2 次有效结果(数组下标 1)作为代表值。回退顺序:
-    //   1. rawSitePing[1] > 0      —— 标准情形,第二次成功
-    //   2. 第一个 > 0 的样本        —— 第二次失败但其它样本成功(罕见)
-    //   3. 全部失败                  —— 保持 0.00,与失败语义一致
     float pingval = 0.0;
-    if(rawSitePing[1] > 0)
-    {
-        pingval = static_cast<float>(rawSitePing[1]);
-    }
-    else
-    {
-        for(int v : rawSitePing)
-        {
-            if(v > 0) { pingval = static_cast<float>(v); break; }
-        }
-    }
+    if(succeedcounter > 0)
+        pingval = totduration * 1.0 / succeedcounter;
     char strtmp[16] = {};
     snprintf(strtmp, sizeof(strtmp), "%0.2f", pingval);
     node.sitePing.assign(strtmp);
     writeLog(LOG_TYPE_GPING, "Ping statistics of target " + target + " : " \
              + std::to_string(loopcounter) + " probes sent, " + std::to_string(succeedcounter) + " successful, " + std::to_string(failcounter) + " failed. ");
-    writeLog(LOG_TYPE_GPING, "Reported sitePing (2nd-attempt or first valid): " + node.sitePing + " ms");
     writeLog(LOG_TYPE_GPING, "Website ping completed. Leaving.");
     return SPEEDTEST_MESSAGE_GOTGPING;
 }

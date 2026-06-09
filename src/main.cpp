@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <numeric>
 #include <thread>
+#include <climits>
 
 #ifdef _WIN32
 #include <conio.h>
@@ -890,30 +891,54 @@ int singleTest(nodeInfo &node)
 
         if(via_kernel)
         {
-            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API (kernel-only protocol)...");
-            // 内核特有协议:mihomo /delay 跑 3 次取平均，失败轮填 0
+            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API (warm-up + min over 4 probes)...");
+            // 关键修复:QUIC 类协议(Hysteria2 / Hysteria / TUIC / AnyTLS)用户报告的
+            // "同一 IP 不同协议延迟相差 5-6 倍"根因就在这里 ——
+            // mihomo /delay 第一次调用时,内核需要完成 mihomo→节点的初次 QUIC 1-RTT
+            // 握手 + 协议版本协商,这次开销被以前的"3 次取平均"硬算进了最终延迟,
+            // 导致 QUIC 协议显示 200-300ms,而 TCP 协议(measureLatency 已经把握手
+            // warmup 摘掉)只显示 50ms 左右,体感差 5-6 倍。
+            //
+            // 现在改成:跑 1 次 warmup(丢弃) + 4 次正式探测取最小值。理由:
+            //   - mihomo 内部对同一 outbound 有连接池,warmup 后续调用复用底层
+            //     UDP socket + QUIC connection,只花纯 RTT
+            //   - 取最小值反映稳态最优路径,与 TCP 路径"warmup 后取多次"语义对齐,
+            //     抖动抗性比平均值更好(平均会被网络毛刺拉高)
+            //   - rawms[0] 留给 warmup 结果(便于调试看握手开销),rawms[1..4]
+            //     是正式探测;最终延迟取 rawms[1..4] 中的最小有效值
+            int warm_ms = 0;
+            if(mihomoMeasureDelay(node.proxyStr, &warm_ms, https_probe_url, 5000))
+            {
+                rawms[0] = warm_ms;
+                writeLog(LOG_TYPE_INFO, "QUIC latency warmup: " + std::to_string(warm_ms) + " ms (discarded)");
+            }
+            else
+            {
+                writeLog(LOG_TYPE_WARN, "QUIC latency warmup failed for '" + node.proxyStr + "'");
+            }
+
+            int min_ms = INT_MAX;
             int ok = 0;
-            int sum = 0;
-            for(int i = 0; i < 3; ++i)
+            for(int i = 0; i < 4; ++i)
             {
                 int ms = 0;
                 if(mihomoMeasureDelay(node.proxyStr, &ms, https_probe_url, 5000))
                 {
-                    rawms[i] = ms;
-                    sum += ms;
+                    rawms[i + 1] = ms;
+                    if(ms < min_ms) min_ms = ms;
                     ok++;
                 }
                 else
                 {
-                    writeLog(LOG_TYPE_WARN, "mihomo /delay probe " + std::to_string(i + 1) + " failed for '" + node.proxyStr + "'");
+                    writeLog(LOG_TYPE_WARN, "mihomo /delay probe " + std::to_string(i + 1) + "/4 failed for '" + node.proxyStr + "'");
                 }
             }
-            if(ok > 0) latency_ms = static_cast<double>(sum) / ok;
+            if(ok > 0) latency_ms = static_cast<double>(min_ms);
         }
         else
         {
-            // TCP 类:预热复用连接，排除 TLS 握手，取多次平均
-            writeLog(LOG_TYPE_INFO, "Measuring latency via libcurl (warm-up + reuse, handshake excluded)...");
+            // TCP 类:预热复用连接,排除 TLS 握手,取多次最小值(与 QUIC 路径一致)
+            writeLog(LOG_TYPE_INFO, "Measuring latency via libcurl (warm-up + min over 3 probes)...");
             latency_ms = measureLatency(https_probe_url, proxy, 3, rawms,
                                         rpcmode ? "" : "延迟");
         }

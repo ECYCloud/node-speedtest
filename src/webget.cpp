@@ -183,9 +183,13 @@ std::string buildSocks5ProxyString(const std::string &addr, int port, const std:
 // REUSE one libcurl handle: a throwaway warm-up request first establishes the
 // TCP+TLS connection, then `probes` measured requests run on the warm (kept-
 // alive) connection — their CURLINFO_TOTAL_TIME excludes the handshake. We
-// return the mean of the successful measured probes (ms), or -1.0 if all fail.
-// Per-probe ms (0 = failed) go into raw[0..probes-1] when non-null. When
-// `progress_label` is non-empty we draw a live progress bar to stderr.
+// return the **minimum** of the successful measured probes (ms), or -1.0 if
+// all fail. Per-probe ms (0 = failed) go into raw[0..probes-1] when non-null.
+// When `progress_label` is non-empty we draw a live progress bar to stderr.
+//
+// 取最小值而非平均值:与 QUIC 路径(main.cpp 调 mihomo /delay 也取最小)统一,
+// 反映稳态最优 RTT,抗网络抖动。原先的"取平均"会被偶发毛刺拉高,造成同节点
+// 多次测试结果不稳。
 //
 // 超时给 20s(原来的 10s 太紧):Hysteria2 / TUIC 等 QUIC 协议首次握手包要走完整
 // 1-RTT 链路，加上代理转发，在弱网下 10s 内 warmup+probe 几乎一定会超时，
@@ -222,7 +226,7 @@ double measureLatency(const std::string &url, const std::string &proxy,
         writeLog(LOG_TYPE_WARN, std::string("Latency warmup failed (")
                  + curl_easy_strerror(warm) + ") url=" + url + " proxy=" + proxy);
 
-    double total = 0.0;
+    int min_ms = -1;
     int ok = 0;
     for(int i = 0; i < probes; ++i)
     {
@@ -236,7 +240,7 @@ double measureLatency(const std::string &url, const std::string &proxy,
             ms = static_cast<int>(t * 1000.0 + 0.5);
             if(ms <= 0) ms = 1;
             if(raw) raw[i] = ms;
-            total += ms;
+            if(min_ms < 0 || ms < min_ms) min_ms = ms;
             ok++;
         }
         else
@@ -255,7 +259,7 @@ double measureLatency(const std::string &url, const std::string &proxy,
     if(show)
         std::cerr << std::endl;
     if(ok == 0) return -1.0;
-    return total / ok;
+    return static_cast<double>(min_ms);
 }
 
 std::string webGet(const std::string &url, const std::string &proxy, unsigned int cache_ttl, std::string *response_headers, string_map *request_headers)

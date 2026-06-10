@@ -1,0 +1,141 @@
+name: Smoke test (real hardware)
+# 在 GitHub 提供的真实 ARM64 / Intel 硬件 runner 上端到端验证 release 产物。
+#
+# 验证内容(每个新平台):
+#   1. 引擎进程能在该 CPU 架构上启动(PE/ELF/Mach-O 加载、动态库全解析)
+#   2. libevent HTTP 服务能监听 127.0.0.1:10870
+#   3. /getversion 返回引擎版本(JSON 序列化、文件 IO)
+#   4. /readsubscriptions 解析订阅(订阅链接走 SMOKE_TEST_SUB_URL secret)
+#   5. mihomo 内核能在该架构上拉起,outbound config 写入成功
+#   6. /start TCP_PING 模式真实测速,至少 1 个节点延迟非 0
+#      → 证明 mihomo 在新架构上协议栈完全工作
+#
+# 验证矩阵(6 个平台,与 build.yml 一致):
+#   linux-amd64 / linux-arm64 / windows-amd64 / windows-arm64 / darwin-amd64 / darwin-arm64
+#
+# 触发:
+#   - 手动 dispatch(默认从最新 v* tag 拉产物)
+#   - tag push 后 desktop release build 完成时自动跑(workflow_run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要测试的 release tag(留空=最新)'
+        required: false
+        default: ''
+  workflow_run:
+    workflows: ['Release build']
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: 'Linux x86_64'
+            runner: ubuntu-latest
+            asset: stairspeedtest_reborn_linux64.tar.gz
+            unpack: 'tar xzf "$ASSET"'
+            exe: stairspeedtest/stairspeedtest
+            shell: bash
+          - label: 'Linux arm64'
+            runner: ubuntu-22.04-arm
+            asset: stairspeedtest_reborn_linux_arm64.tar.gz
+            unpack: 'tar xzf "$ASSET"'
+            exe: stairspeedtest/stairspeedtest
+            shell: bash
+          - label: 'Windows x86_64'
+            runner: windows-latest
+            asset: stairspeedtest_reborn_win64.zip
+            unpack: 'unzip -q "$ASSET"'
+            exe: stairspeedtest/stairspeedtest.exe
+            shell: bash
+          - label: 'Windows arm64'
+            runner: windows-11-arm
+            asset: stairspeedtest_reborn_win_arm64.zip
+            unpack: 'unzip -q "$ASSET"'
+            exe: stairspeedtest/stairspeedtest.exe
+            shell: bash
+          - label: 'macOS arm64 (Apple Silicon)'
+            runner: macos-latest
+            asset: stairspeedtest_reborn_darwin_arm64.tar.gz
+            unpack: 'tar xzf "$ASSET"'
+            exe: stairspeedtest/stairspeedtest
+            shell: bash
+          - label: 'macOS amd64 (Intel)'
+            runner: macos-15-intel
+            asset: stairspeedtest_reborn_darwin_amd64.tar.gz
+            unpack: 'tar xzf "$ASSET"'
+            exe: stairspeedtest/stairspeedtest
+            shell: bash
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            scripts/smoke-test
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve target tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -e
+          if [ -n "$INPUT_TAG" ]; then
+            T="$INPUT_TAG"
+          else
+            T=$(gh release list --limit 30 --json tagName --jq '[.[] | select(.tagName | startswith("v"))][0].tagName' --repo "$GITHUB_REPOSITORY")
+          fi
+          [ -n "$T" ] || { echo "找不到可测试的 release tag"; exit 1; }
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          echo "Target release: $T"
+
+      - name: Download release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET"
+          ls -la "$ASSET"
+
+      - name: Unpack
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          eval "${{ matrix.unpack }}"
+          ls stairspeedtest/ | head -30
+
+      - name: Run smoke test
+        env:
+          SUB_URL: ${{ secrets.SMOKE_TEST_SUB_URL }}
+          EXE: ${{ matrix.exe }}
+        run: bash scripts/smoke-test/run.sh
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-logs-${{ matrix.label }}
+          path: |
+            stairspeedtest/logs/**
+            stairspeedtest/engine_stdout.log
+            stairspeedtest/engine_stderr.log
+            stairspeedtest/results/**
+          if-no-files-found: warn
+          retention-days: 14

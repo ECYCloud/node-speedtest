@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <numeric>
 #include <thread>
+#include <csignal>
 
 #ifdef _WIN32
 #include <conio.h>

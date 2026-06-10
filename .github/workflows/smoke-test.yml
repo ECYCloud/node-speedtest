@@ -114,6 +114,20 @@ jobs:
           chmod +x "engine/${{ matrix.exe }}" || true
           chmod +x engine/tools/clients/mihomo* 2>/dev/null || true
 
+      # Windows runner 自带 Defender 实时扫描会拦截 mihomo.exe 启动 ——
+      # CreateProcess 表面成功但子进程被 SmartScreen / 文件 IO 锁挂住,
+      # 表现为 launchMihomoForNodes 阻塞数分钟。把工作目录加进白名单。
+      - name: Disable Defender on engine dir (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $engine = (Resolve-Path "$env:GITHUB_WORKSPACE\engine").Path
+          Add-MpPreference -ExclusionPath $engine -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "$engine\tools\clients\mihomo.exe" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "$engine\stairspeedtest.exe" -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          Write-Host "Defender exclusions added for $engine"
+
       - name: Run smoke test
         env:
           SUB_URL: ${{ secrets.SMOKE_TEST_SUB_URL }}

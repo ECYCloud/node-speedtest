@@ -16,6 +16,13 @@ BASE="http://127.0.0.1:${PORT}"
 DIR=$(dirname "$EXE")
 EXE_NAME=$(basename "$EXE")
 
+# Windows git bash 默认会把以 / 开头的 cli 参数转成 Windows 路径(/web 变 C:/Program Files/Git/web),
+# 引擎收不到 /web 标志就退回 CLI 交互模式,然后因 stdin EOF 立即结束。
+# MSYS_NO_PATHCONV=1 + MSYS2_ARG_CONV_EXCL=* 同时禁用 cygwin 与 MSYS2 两套转换。
+# 这两个变量在 Linux/macOS 上不会被读到,设了也无害。
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
 cd "$DIR"
 echo "[smoke] cwd=$(pwd) exe=$EXE_NAME py=$PY"
 
@@ -85,11 +92,24 @@ sleep 3  # mihomo outbound 注册稳态化
 
 # 阶段 4: TCP_PING 测速并轮询 /status 等完成
 echo "::group::阶段 4 - POST /start (TCP_PING)"
+# /start 必须把要测的节点列表通过 configs 字段传回,否则 targetNodes 是空、
+# batchTest 立即结束。configs 元素结构与 /readsubscriptions 返回的一致。
+# server_port 是 Int,但 ssrspeed_regenerate_node_list 用 stoi 解析,Int / String 都能吃。
+"$PY" -c "
+import json
+configs = json.load(open('sub_resp.json'))
+print(json.dumps({
+    'testMode': 'TCP_PING',
+    'sortMethod': 'none',
+    'group': '',
+    'configs': configs
+}))" > start_body.json
 curl -fsS --max-time 10 -X POST "${BASE}/start" \
   -H 'Content-Type: application/json' \
-  --data '{"testMode":"TCP_PING","sortMethod":"none","group":""}' \
+  --data-binary @start_body.json \
   || { echo "FAIL 阶段 4: /start 调用失败"; exit 4; }
 echo ""
+sleep 2  # 让测速线程把 start_flag 翻成 true,避免下面循环立刻看到 stopped 而误判完成
 
 DEADLINE=$(( $(date +%s) + 600 ))
 LAST_DONE=-1

@@ -26,6 +26,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["time", "rt"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+tauri-plugin-single-instance = "2"
 
 # Windows 任务栏图标修复(WM_SETICON + CreateIconFromResourceEx),仅 Windows 编译。
 # 背景:Tauri 2.11.2 的 tauri-codegen 解析 bundle.icon 时只取 ICO 的 entries()[0],

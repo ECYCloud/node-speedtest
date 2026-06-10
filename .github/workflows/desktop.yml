@@ -164,6 +164,145 @@ jobs:
           draft: false
 
   # ============================================================
+  # Windows arm64 — NSIS
+  # 用 windows-11-arm runner + MSYS2 CLANGARM64 编 C++ 引擎,
+  # Rust 走 aarch64-pc-windows-msvc target,Tauri 出 ARM64 NSIS 安装包。
+  # ============================================================
+  windows_arm64_desktop:
+    name: Windows arm64 desktop (Tauri NSIS)
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            base-devel git unzip
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-lld
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-pkgconf
+            mingw-w64-clang-aarch64-curl
+            mingw-w64-clang-aarch64-openssl
+            mingw-w64-clang-aarch64-yaml-cpp
+            mingw-w64-clang-aarch64-libevent
+            mingw-w64-clang-aarch64-pcre2
+            mingw-w64-clang-aarch64-rapidjson
+            mingw-w64-clang-aarch64-libpng
+            mingw-w64-clang-aarch64-freetype
+            mingw-w64-clang-aarch64-harfbuzz
+            mingw-w64-clang-aarch64-zlib
+            mingw-w64-clang-aarch64-bzip2
+
+      - name: Read mihomo version from version.h
+        id: ver
+        shell: msys2 {0}
+        run: |
+          MV=$(grep MIHOMO_FALLBACK_VERSION src/version.h | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+          echo "mihomo=$MV" >> "$GITHUB_OUTPUT"
+
+      - name: Build PNGwriter from source
+        shell: msys2 {0}
+        run: |
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/clangarm64 \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j
+          cmake --install /tmp/pngwriter/build
+
+      - name: Build C++ engine with /web mode
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_WEBSERVER_ENGINE=ON
+          cmake --build build -j
+
+      - name: Assemble engine directory
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          ENGINE=separated/desktop/src-tauri/engine
+          rm -rf "$ENGINE"
+          mkdir -p "$ENGINE/tools/clients" "$ENGINE/tools/misc"
+
+          cp build/stairspeedtest.exe "$ENGINE/"
+
+          # CLANGARM64 prefix:/clangarm64,所有非系统 DLL 在那
+          ldd build/stairspeedtest.exe \
+            | awk '{print $3}' | grep -i '^/clangarm64/bin/' | sort -u \
+            | xargs -I{} cp {} "$ENGINE/"
+
+          cp base/tools/misc/SourceHanSansCN-Medium.otf "$ENGINE/tools/misc/"
+          cp base/tools/misc/TwemojiFlat.ttf "$ENGINE/tools/misc/"
+
+          cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
+          cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
+          cp base/pref.ini "$ENGINE/"
+
+          MV=${{ steps.ver.outputs.mihomo }}
+          curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-windows-arm64-$MV.zip"
+          unzip -o "mihomo-windows-arm64-$MV.zip" -d /tmp/mihomo
+          cp /tmp/mihomo/mihomo-windows-arm64*.exe "$ENGINE/tools/clients/mihomo.exe"
+
+          ls -la "$ENGINE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: separated/desktop/package-lock.json
+
+      # Rust 主进程用 MSVC 工具链(Tauri 在 Windows ARM64 推荐路径),target 显式指定
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            separated/desktop/src-tauri/target
+          key: ${{ runner.os }}-arm64-cargo-tauri-${{ hashFiles('separated/desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install npm deps
+        working-directory: separated/desktop
+        run: npm ci
+
+      - name: Tauri build (NSIS, arm64)
+        working-directory: separated/desktop
+        run: npm run tauri -- build --target aarch64-pc-windows-msvc
+
+      - name: Locate NSIS installer
+        id: locate
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem separated/desktop/src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe |
+                 Select-Object -First 1
+          if (-not $exe) { throw "NSIS installer not produced" }
+          "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($exe.Name)"     >> $env:GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: stair-speedtest-windows-arm64-desktop
+          path: ${{ steps.locate.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.locate.outputs.path }}
+          draft: false
+
+  # ============================================================
   # macOS arm64 (Apple Silicon) — DMG
   # ============================================================
   macos_desktop:
@@ -272,6 +411,123 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: stair-speedtest-macos-desktop
+          path: ${{ steps.locate.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.locate.outputs.path }}
+          draft: false
+
+  # ============================================================
+  # macOS amd64 (Intel) — DMG
+  # macos-15-intel:GitHub 最后的 Intel macOS runner,持续到 2027-08
+  # ============================================================
+  macos_intel_desktop:
+    name: macOS Intel desktop (Tauri DMG)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build deps (Homebrew)
+        run: |
+          brew update
+          brew install cmake pkgconf dylibbundler \
+            curl openssl@3 yaml-cpp \
+            libevent pcre2 rapidjson \
+            libpng freetype harfbuzz zlib bzip2
+
+      - name: Read mihomo version from version.h
+        id: ver
+        run: |
+          MV=$(grep MIHOMO_FALLBACK_VERSION src/version.h | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+          echo "mihomo=$MV" >> "$GITHUB_OUTPUT"
+
+      - name: Build PNGwriter from source
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_FRAMEWORK=NEVER \
+                -DCMAKE_INSTALL_PREFIX="$BREW_PREFIX" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j$(sysctl -n hw.ncpu)
+          cmake --install /tmp/pngwriter/build
+
+      - name: Build C++ engine with /web mode
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/opt/curl/lib/pkgconfig:$BREW_PREFIX/opt/openssl@3/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_WEBSERVER_ENGINE=ON \
+                -DCMAKE_PREFIX_PATH="$BREW_PREFIX/opt/curl;$BREW_PREFIX" \
+                -DOPENSSL_ROOT_DIR="$BREW_PREFIX/opt/openssl@3"
+          cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Assemble engine directory
+        run: |
+          set -euxo pipefail
+          ENGINE=separated/desktop/src-tauri/engine
+          rm -rf "$ENGINE"
+          mkdir -p "$ENGINE/tools/clients" "$ENGINE/tools/misc" "$ENGINE/libs"
+
+          cp build/stairspeedtest "$ENGINE/"
+          dylibbundler -od -b -x "$ENGINE/stairspeedtest" -d "$ENGINE/libs/" -p @executable_path/libs/
+
+          cp base/tools/misc/SourceHanSansCN-Medium.otf "$ENGINE/tools/misc/"
+          cp base/tools/misc/TwemojiFlat.ttf "$ENGINE/tools/misc/"
+          cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
+          cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
+          cp base/pref.ini "$ENGINE/"
+
+          MV=${{ steps.ver.outputs.mihomo }}
+          curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-darwin-amd64-$MV.gz"
+          gunzip "mihomo-darwin-amd64-$MV.gz"
+          install -m 0755 "mihomo-darwin-amd64-$MV" "$ENGINE/tools/clients/mihomo"
+
+          ls -la "$ENGINE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: separated/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            separated/desktop/src-tauri/target
+          key: ${{ runner.os }}-intel-cargo-tauri-${{ hashFiles('separated/desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install npm deps
+        working-directory: separated/desktop
+        run: npm ci
+
+      - name: Tauri build (DMG, x86_64)
+        working-directory: separated/desktop
+        run: npm run tauri -- build --bundles dmg --target x86_64-apple-darwin
+
+      - name: Locate DMG
+        id: locate
+        run: |
+          DMG=$(find separated/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -name '*.dmg' | head -n 1)
+          [ -n "$DMG" ] || { echo "DMG not produced"; exit 1; }
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: stair-speedtest-macos-intel-desktop
           path: ${{ steps.locate.outputs.path }}
           if-no-files-found: error
 
@@ -415,6 +671,156 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: stair-speedtest-linux-desktop
+          path: |
+            ${{ steps.locate.outputs.appimage }}
+            ${{ steps.locate.outputs.deb }}
+          if-no-files-found: error
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.locate.outputs.appimage }}
+            ${{ steps.locate.outputs.deb }}
+          draft: false
+
+
+  # ============================================================
+  # Linux arm64 — AppImage + deb
+  # ubuntu-22.04-arm runner + apt 原生 arm64 包
+  # ============================================================
+  linux_arm64_desktop:
+    name: Linux arm64 desktop (Tauri AppImage + deb)
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build deps (apt)
+        run: |
+          sudo apt-get update
+          # Tauri 2 GUI 系统库
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf \
+            file
+          # C++ 引擎依赖
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libcurl4-openssl-dev libssl-dev libyaml-cpp-dev \
+            libevent-dev libpcre2-dev rapidjson-dev \
+            libpng-dev libfreetype-dev libharfbuzz-dev zlib1g-dev libbz2-dev
+
+      - name: Read mihomo version from version.h
+        id: ver
+        run: |
+          MV=$(grep MIHOMO_FALLBACK_VERSION src/version.h | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+          echo "mihomo=$MV" >> "$GITHUB_OUTPUT"
+
+      - name: Build PNGwriter from source
+        run: |
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/usr/local \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j$(nproc)
+          sudo cmake --install /tmp/pngwriter/build
+
+      - name: Build C++ engine with /web mode
+        run: |
+          cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_WEBSERVER_ENGINE=ON
+          cmake --build build -j$(nproc)
+
+      - name: Assemble engine directory
+        run: |
+          set -euxo pipefail
+          ENGINE=separated/desktop/src-tauri/engine
+          rm -rf "$ENGINE"
+          mkdir -p "$ENGINE/tools/clients" "$ENGINE/tools/misc"
+
+          cp build/stairspeedtest "$ENGINE/"
+          chmod +x "$ENGINE/stairspeedtest"
+
+          # 黑名单与 amd64 流水线一致:glibc 内核 + 系统 GUI/图形/IPC 栈走系统的,
+          # 其余链入 engine/。aarch64 上 ld-linux 名字不同(ld-linux-aarch64.so.1),
+          # 用宽匹配 ld-linux[^/]* 已涵盖。
+          SYS_LIB_RE='/(ld-linux[^/]*|libc|libm|libdl|libpthread|librt|libresolv|libnsl|libutil|libgcc_s|libstdc\+\+|libwayland-[a-z]+|libX[0-9A-Za-z]+|libxcb[^/]*|libxkb[^/]*|libdrm|libEGL|libGL|libOpenGL|libgbm|libgl[a-z]*|libgtk-3|libgdk-3|libgdk_pixbuf-2|libwebkit2gtk-[0-9.]+|libjavascriptcoregtk-[0-9.]+|libsoup-[0-9.]+|libpango[^/]*|libcairo[^/]*|libatk[^/]*|libepoxy|libglib-2|libgobject-2|libgio-2|libgmodule-2|libgthread-2|libdbus-1|libsystemd|libselinux|libudev)\.so'
+
+          mapfile -t BUNDLE_LIBS < <(
+            ldd "$ENGINE/stairspeedtest" \
+              | awk '/=> \// {print $3}' \
+              | grep -Ev "$SYS_LIB_RE" \
+              | sort -u
+          )
+          echo "Bundling ${#BUNDLE_LIBS[@]} runtime libs into engine/:"
+          printf '  %s\n' "${BUNDLE_LIBS[@]}"
+          cp -L -t "$ENGINE/" "${BUNDLE_LIBS[@]}"
+
+          patchelf --set-rpath '$ORIGIN' "$ENGINE/stairspeedtest"
+          for so in "$ENGINE"/*.so*; do
+            [ -f "$so" ] && [ ! -L "$so" ] && patchelf --set-rpath '$ORIGIN' "$so" || true
+          done
+
+          cp base/tools/misc/SourceHanSansCN-Medium.otf "$ENGINE/tools/misc/"
+          cp base/tools/misc/TwemojiFlat.ttf "$ENGINE/tools/misc/"
+          cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
+          cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
+          cp base/pref.ini "$ENGINE/"
+
+          MV=${{ steps.ver.outputs.mihomo }}
+          curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-linux-arm64-$MV.gz"
+          gunzip "mihomo-linux-arm64-$MV.gz"
+          install -m 0755 "mihomo-linux-arm64-$MV" "$ENGINE/tools/clients/mihomo"
+
+          ls -la "$ENGINE"
+          file "$ENGINE/stairspeedtest"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: separated/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            separated/desktop/src-tauri/target
+          key: ${{ runner.os }}-arm64-cargo-tauri-${{ hashFiles('separated/desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install npm deps
+        working-directory: separated/desktop
+        run: npm ci
+
+      - name: Tauri build (AppImage + deb, arm64)
+        working-directory: separated/desktop
+        run: npm run tauri -- build --bundles appimage deb
+
+      - name: Locate Linux bundles
+        id: locate
+        run: |
+          set -e
+          BUNDLE=separated/desktop/src-tauri/target/release/bundle
+          APPIMAGE=$(find "$BUNDLE/appimage" -name '*.AppImage' 2>/dev/null | head -n 1)
+          DEB=$(find "$BUNDLE/deb" -name '*.deb' 2>/dev/null | head -n 1)
+          [ -n "$APPIMAGE" ] || { echo "AppImage not produced"; exit 1; }
+          [ -n "$DEB" ] || { echo "deb not produced"; exit 1; }
+          {
+            echo "appimage=$APPIMAGE"
+            echo "deb=$DEB"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: stair-speedtest-linux-arm64-desktop
           path: |
             ${{ steps.locate.outputs.appimage }}
             ${{ steps.locate.outputs.deb }}

@@ -93,21 +93,27 @@ cmake --build build -j
 
 ### 命令行 / Web 引擎(`stairspeedtest`)
 
-CI 每次提交都跑,三平台都过编译与冒烟测试:
+CI 每次提交都跑,六平台都过编译与冒烟测试:
 
-| 平台 | CPU | 操作系统 | 状态 |
-|------|-----|---------|------|
-| **Linux** | x86_64 | Ubuntu 24.04 | ✓ 已验证 |
-| **Windows** | x86_64 | 最新版 | ✓ 已验证 |
-| **macOS** | arm64 | 最新版 | ✓ 已验证 |
+| 平台 | CPU | Runner / 工具链 | 状态 |
+|------|-----|----------------|------|
+| **Linux** | x86_64 | Ubuntu 24.04 / GCC | ✓ 已验证 |
+| **Linux** | arm64 | Ubuntu 22.04 ARM / GCC | ✓ 已验证 |
+| **Windows** | x86_64 | MSYS2 MINGW64 (GCC) | ✓ 已验证 |
+| **Windows** | arm64 | MSYS2 CLANGARM64 (Clang/LLVM) | ✓ 已验证 |
+| **macOS** | arm64 (Apple Silicon) | macos-latest / Homebrew | ✓ 已验证 |
+| **macOS** | x86_64 (Intel) | macos-15-intel / Homebrew | ✓ 已验证 |
 
 ### Tauri 桌面端(`separated/desktop/`)
 
-| 平台 | 安装包 | 状态 |
-|------|--------|------|
-| **Windows** x86_64 | NSIS (`.exe`) | ✓ 主分发渠道,长期验证 |
-| **Linux** x86_64 | `.deb` / `.AppImage` | ⚠️ 实验性,见下面平台说明 |
-| **macOS** arm64 | `.dmg`(未签名) | ⚠️ 实验性,首次启动需在 Gatekeeper 中放行 |
+| 平台 | CPU | 安装包 | 状态 |
+|------|-----|--------|------|
+| **Windows** | x86_64 | NSIS (`.exe`) | ✓ 主分发渠道,长期验证 |
+| **Windows** | arm64 | NSIS (`.exe`) | ✓ 原生 ARM64 构建 |
+| **Linux** | x86_64 | `.deb` / `.AppImage` | ⚠️ 实验性,见下面平台说明 |
+| **Linux** | arm64 | `.deb` / `.AppImage` | ⚠️ 实验性 |
+| **macOS** | arm64 (Apple Silicon) | `.dmg`(未签名) | ⚠️ 实验性,首次启动需在 Gatekeeper 中放行 |
+| **macOS** | x86_64 (Intel) | `.dmg`(未签名) | ⚠️ 实验性,首次启动需在 Gatekeeper 中放行 |
 
 **Linux 选哪个包**:
 

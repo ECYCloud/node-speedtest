@@ -1,8 +1,16 @@
 name: Verify build
 # Minimal compile-check workflow: confirms the C++ source still compiles on
-# Linux, Windows and macOS after the mihomo-kernel refactor. Skips third-party
-# kernel binaries and the legacy from-source dependency build (those are
-# unrelated to our code change).
+# Linux, Windows and macOS (x64 + arm64) after the mihomo-kernel refactor.
+# Skips third-party kernel binaries and the legacy from-source dependency build
+# (those are unrelated to our code change).
+#
+# 平台矩阵(6 组):
+#   ubuntu-latest        | linux/amd64  | apt + g++
+#   ubuntu-22.04-arm     | linux/arm64  | apt + g++(原生)
+#   windows-latest       | win/amd64    | MSYS2 MINGW64
+#   windows-11-arm       | win/arm64    | MSYS2 CLANGARM64(原生 ARM64 LLVM 工具链)
+#   macos-latest         | darwin/arm64 | Homebrew + clang
+#   macos-15-intel       | darwin/amd64 | Homebrew + clang(GitHub 最后的 Intel runner)
 
 on:
   push:
@@ -56,6 +64,52 @@ jobs:
           path: |
             build/stairspeedtest
             build/Release/stairspeedtest
+          if-no-files-found: warn
+          retention-days: 7
+
+  ubuntu_arm64_compile:
+    name: Ubuntu 22.04 / arm64 / cmake
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libcurl4-openssl-dev libssl-dev libyaml-cpp-dev \
+            libevent-dev libpcre2-dev rapidjson-dev \
+            libpng-dev libfreetype-dev libharfbuzz-dev zlib1g-dev libbz2-dev
+
+      - name: Build PNGwriter (header-only-ish, not in apt)
+        run: |
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/usr/local \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j$(nproc)
+          sudo cmake --install /tmp/pngwriter/build
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile
+        run: cmake --build build -j$(nproc)
+
+      - name: Inspect produced binary
+        run: |
+          ls -la build/ || true
+          file build/stairspeedtest 2>/dev/null || \
+          find build -type f -name 'stairspeedtest*' -exec file {} \;
+
+      - name: Upload binary
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stairspeedtest-linux-arm64
+          path: build/stairspeedtest
           if-no-files-found: warn
           retention-days: 7
 
@@ -131,6 +185,81 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  windows_arm64_compile:
+    name: Windows / arm64 / MSYS2 CLANGARM64
+    # Windows ARM64 上 MSYS2 唯一可用的原生工具链是 CLANGARM64(LLVM/clang)。
+    # MINGW64/UCRT64 都没有 ARM64 后端,只能走 clang。
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            base-devel git
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-lld
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-pkgconf
+            mingw-w64-clang-aarch64-curl
+            mingw-w64-clang-aarch64-openssl
+            mingw-w64-clang-aarch64-yaml-cpp
+            mingw-w64-clang-aarch64-libevent
+            mingw-w64-clang-aarch64-pcre2
+            mingw-w64-clang-aarch64-rapidjson
+            mingw-w64-clang-aarch64-libpng
+            mingw-w64-clang-aarch64-freetype
+            mingw-w64-clang-aarch64-harfbuzz
+            mingw-w64-clang-aarch64-zlib
+            mingw-w64-clang-aarch64-bzip2
+
+      - name: Build PNGwriter from source (not packaged in MSYS2)
+        run: |
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/clangarm64 \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j
+          cmake --install /tmp/pngwriter/build
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile
+        run: cmake --build build -j
+
+      - name: Inspect artifact
+        run: |
+          ls -la build/
+          file build/stairspeedtest.exe || true
+
+      - name: Stage exe + runtime DLLs into one folder
+        run: |
+          mkdir -p stage
+          cp build/stairspeedtest.exe stage/
+          # CLANGARM64 prefix is /clangarm64,DLL 全在那
+          ldd build/stairspeedtest.exe \
+            | awk '{print $3}' \
+            | grep -i '^/clangarm64/bin/' \
+            | sort -u \
+            | xargs -I{} cp {} stage/
+          ls -la stage/
+
+      - name: Upload binary
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stairspeedtest-windows-arm64
+          path: stage/
+          if-no-files-found: warn
+          retention-days: 7
+
   macos_arm64_compile:
     name: macOS / arm64 / Homebrew clang
     runs-on: macos-latest
@@ -180,6 +309,61 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: stairspeedtest-macos-arm64
+          path: build/stairspeedtest
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos_intel_compile:
+    name: macOS / amd64 / Homebrew clang (Intel)
+    # macos-15-intel 是 GitHub 最后一个 Intel macOS runner 标签,持续到 2027-08。
+    # 老的 macos-13 已于 2025-12 停用。
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build deps (Homebrew)
+        run: |
+          brew update
+          brew install cmake pkgconf \
+            curl openssl@3 yaml-cpp \
+            libevent pcre2 rapidjson \
+            libpng freetype harfbuzz zlib bzip2
+
+      - name: Build PNGwriter from source (not in Homebrew)
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          git clone --depth 1 https://github.com/pngwriter/pngwriter.git /tmp/pngwriter
+          cmake -S /tmp/pngwriter -B /tmp/pngwriter/build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_FIND_FRAMEWORK=NEVER \
+                -DCMAKE_INSTALL_PREFIX="$BREW_PREFIX" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/pngwriter/build -j$(sysctl -n hw.ncpu)
+          cmake --install /tmp/pngwriter/build
+
+      - name: Configure
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          # Intel mac 上 Homebrew 在 /usr/local;curl/openssl@3 仍 keg-only,需显式指向
+          export PKG_CONFIG_PATH="$BREW_PREFIX/opt/curl/lib/pkgconfig:$BREW_PREFIX/opt/openssl@3/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_PREFIX_PATH="$BREW_PREFIX/opt/curl;$BREW_PREFIX" \
+                -DOPENSSL_ROOT_DIR="$BREW_PREFIX/opt/openssl@3"
+
+      - name: Compile
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Inspect artifact
+        run: |
+          ls -la build/
+          file build/stairspeedtest || true
+
+      - name: Upload binary
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stairspeedtest-macos-amd64
           path: build/stairspeedtest
           if-no-files-found: warn
           retention-days: 7

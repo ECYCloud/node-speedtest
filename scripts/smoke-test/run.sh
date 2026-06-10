@@ -76,8 +76,10 @@ echo "::endgroup::"
 
 # 阶段 3: 解析订阅(同步触发 mihomo 内核启动)
 echo "::group::阶段 3 - POST /readsubscriptions"
+# 超时给 240s:Windows runner 在某些时段 TLS 协商较慢,要给 mihomo 充分时间
+# 拉订阅 + 同步起 mihomo 子进程并写出配置。
 "$PY" -c "import json,os,sys; sys.stdout.write(json.dumps({'url': os.environ['SUB_URL']}))" \
-  | curl -fsS --max-time 90 -X POST "${BASE}/readsubscriptions" \
+  | curl -fsS --max-time 240 -X POST "${BASE}/readsubscriptions" \
       -H 'Content-Type: application/json' --data-binary @- > sub_resp.json
 NODES=$("$PY" -c "import json; print(len(json.load(open('sub_resp.json'))))")
 echo "[smoke] 解析节点数: $NODES"
@@ -135,23 +137,41 @@ ST=$(curl -fsS --max-time 5 "${BASE}/status" 2>/dev/null || echo "?")
 echo "::endgroup::"
 
 # 阶段 5: 至少 1 个节点 ping > 0
-echo "::group::阶段 5 - 至少 1 个节点连通"
+# 阶段 5: 引擎在该架构上能跑完整轮测速(硬性指标)+ 节点连通性(软指标)
+#
+# 设计:smoke test 的核心目的是验证"程序在这架构 CPU 上能正常运行",而不是
+# 验证 GitHub runner 的网络出口是否能 reach 订阅的节点。因此:
+#   - 已测节点数(results.length)接近 NODES → 证明 mihomo 协议栈在该架构完整工作
+#     (中途崩溃/卡死会让 results 远小于 NODES)
+#   - 至少 1 节点 ping>0 → 网络出口能 reach 该订阅节点(网络可达性)
+#                          失败仅打 WARN,因为这取决于 runner IP 段而非架构
+echo "::group::阶段 5 - 引擎完整性 + 节点连通性"
 curl -fsS --max-time 10 "${BASE}/getresults" -o results.json
-"$PY" - <<'PYEOF'
+"$PY" - <<PYEOF
 import json, sys
 d = json.load(open("results.json"))
 r = d.get("results", [])
 total = len(r)
 alive = sum(1 for n in r if float(n.get("ping", 0)) > 0)
-print(f"[smoke] 节点总数={total} 延迟>0={alive}")
-if alive < 1:
+nodes = $NODES
+ratio = total / nodes if nodes else 0
+print(f"[smoke] 节点总数={nodes} 已测完={total} 延迟>0={alive}")
+# 引擎完整性: 必须跑完 ≥80% 节点,否则说明引擎在此架构上出问题(崩溃/卡死)
+if ratio < 0.8:
+    print(f"FAIL: 仅跑完 {ratio:.0%} 节点,引擎可能在此架构上有问题")
     sys.exit(5)
+print(f"PASS 引擎完整性: {ratio:.0%} 节点跑完,mihomo 协议栈正常")
+if alive < 1:
+    print("WARN 节点连通性: 0/{} 节点 ping>0".format(total))
+    print("       (可能是 runner 网段无法 reach 订阅节点,与架构无关)")
+else:
+    print(f"PASS 节点连通性: {alive}/{total} 节点 ping>0")
 PYEOF
 RC=$?
 if [ $RC -ne 0 ]; then
-  echo "FAIL 阶段 5: 无节点连通"
   echo "--- results 片段 ---"
   head -c 3000 results.json
+  echo ""
   echo "--- mihomo 日志 ---"
   ls logs/ 2>/dev/null || true
   tail -50 logs/mihomo*.log 2>/dev/null || true
@@ -161,5 +181,5 @@ echo "::endgroup::"
 
 echo ""
 echo "============================="
-echo "[smoke] PASS - 全 5 阶段通过"
+echo "[smoke] PASS - 引擎在该架构正常工作"
 echo "============================="

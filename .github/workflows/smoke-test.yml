@@ -1,5 +1,6 @@
 name: Smoke test (real hardware)
-# 在 GitHub 提供的真实 ARM64 / Intel 硬件 runner 上端到端验证 release 产物。
+# 在 GitHub 提供的对应 CPU 架构 runner 上消费 desktop release build 产出的
+# webserver engine artifact,做端到端 5 阶段验证。
 #
 # 验证内容(每个新平台):
 #   1. 引擎进程能在该 CPU 架构上启动(PE/ELF/Mach-O 加载、动态库全解析)
@@ -10,22 +11,19 @@ name: Smoke test (real hardware)
 #   6. /start TCP_PING 模式真实测速,至少 1 个节点延迟非 0
 #      → 证明 mihomo 在新架构上协议栈完全工作
 #
-# 验证矩阵(6 个平台,与 build.yml 一致):
-#   linux-amd64 / linux-arm64 / windows-amd64 / windows-arm64 / darwin-amd64 / darwin-arm64
-#
 # 触发:
-#   - 手动 dispatch(默认从最新 v* tag 拉产物)
+#   - 手动 dispatch(默认从最新成功 desktop run 拉 artifact)
 #   - tag push 后 desktop release build 完成时自动跑(workflow_run)
 
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: '要测试的 release tag(留空=最新)'
+      run_id:
+        description: 'Desktop release build 的 run id(留空=自动取最新成功 run)'
         required: false
         default: ''
   workflow_run:
-    workflows: ['Release build']
+    workflows: ['Desktop release build']
     types: [completed]
 
 permissions:
@@ -37,50 +35,44 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: 'Linux x86_64'
             runner: ubuntu-latest
-            asset: stairspeedtest_reborn_linux64.tar.gz
-            unpack: 'tar xzf "$ASSET"'
-            exe: stairspeedtest/stairspeedtest
-            shell: bash
+            artifact: engine-linux-x64
+            exe: stairspeedtest
+            py: python3
           - label: 'Linux arm64'
             runner: ubuntu-22.04-arm
-            asset: stairspeedtest_reborn_linux_arm64.tar.gz
-            unpack: 'tar xzf "$ASSET"'
-            exe: stairspeedtest/stairspeedtest
-            shell: bash
+            artifact: engine-linux-arm64
+            exe: stairspeedtest
+            py: python3
           - label: 'Windows x86_64'
             runner: windows-latest
-            asset: stairspeedtest_reborn_win64.zip
-            unpack: 'unzip -q "$ASSET"'
-            exe: stairspeedtest/stairspeedtest.exe
-            shell: bash
+            artifact: engine-windows-x64
+            exe: stairspeedtest.exe
+            py: python
           - label: 'Windows arm64'
             runner: windows-11-arm
-            asset: stairspeedtest_reborn_win_arm64.zip
-            unpack: 'unzip -q "$ASSET"'
-            exe: stairspeedtest/stairspeedtest.exe
-            shell: bash
+            artifact: engine-windows-arm64
+            exe: stairspeedtest.exe
+            py: python
           - label: 'macOS arm64 (Apple Silicon)'
             runner: macos-latest
-            asset: stairspeedtest_reborn_darwin_arm64.tar.gz
-            unpack: 'tar xzf "$ASSET"'
-            exe: stairspeedtest/stairspeedtest
-            shell: bash
+            artifact: engine-darwin-arm64
+            exe: stairspeedtest
+            py: python3
           - label: 'macOS amd64 (Intel)'
             runner: macos-15-intel
-            asset: stairspeedtest_reborn_darwin_amd64.tar.gz
-            unpack: 'tar xzf "$ASSET"'
-            exe: stairspeedtest/stairspeedtest
-            shell: bash
+            artifact: engine-darwin-amd64
+            exe: stairspeedtest
+            py: python3
     defaults:
       run:
-        shell: ${{ matrix.shell }}
+        shell: bash
     steps:
       - uses: actions/checkout@v5
         with:
@@ -88,54 +80,58 @@ jobs:
             scripts/smoke-test
           sparse-checkout-cone-mode: false
 
-      - name: Resolve target tag
-        id: tag
+      - name: Resolve source desktop run
+        id: src
         env:
           GH_TOKEN: ${{ github.token }}
-          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+          WF_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -e
-          if [ -n "$INPUT_TAG" ]; then
-            T="$INPUT_TAG"
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RID="$WF_RUN_ID"
+          elif [ -n "$INPUT_RUN_ID" ]; then
+            RID="$INPUT_RUN_ID"
           else
-            T=$(gh release list --limit 30 --json tagName --jq '[.[] | select(.tagName | startswith("v"))][0].tagName' --repo "$GITHUB_REPOSITORY")
+            RID=$(gh run list --workflow="Desktop release build" --status success --limit 1 \
+                  --json databaseId --jq '.[0].databaseId' --repo "$GITHUB_REPOSITORY")
           fi
-          [ -n "$T" ] || { echo "找不到可测试的 release tag"; exit 1; }
-          echo "tag=$T" >> "$GITHUB_OUTPUT"
-          echo "Target release: $T"
+          [ -n "$RID" ] || { echo "找不到可用的 desktop run"; exit 1; }
+          echo "run_id=$RID" >> "$GITHUB_OUTPUT"
+          echo "Source desktop run: $RID"
 
-      - name: Download release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ASSET: ${{ matrix.asset }}
-        run: |
-          gh release download "${{ steps.tag.outputs.tag }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$ASSET"
-          ls -la "$ASSET"
+      - name: Download engine artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: engine
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.src.outputs.run_id }}
 
-      - name: Unpack
-        env:
-          ASSET: ${{ matrix.asset }}
+      - name: Make executable
         run: |
-          eval "${{ matrix.unpack }}"
-          ls stairspeedtest/ | head -30
+          ls -la engine/
+          chmod +x "engine/${{ matrix.exe }}" || true
+          chmod +x engine/tools/clients/mihomo* 2>/dev/null || true
 
       - name: Run smoke test
         env:
           SUB_URL: ${{ secrets.SMOKE_TEST_SUB_URL }}
-          EXE: ${{ matrix.exe }}
+          EXE: engine/${{ matrix.exe }}
+          PY: ${{ matrix.py }}
         run: bash scripts/smoke-test/run.sh
 
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: smoke-logs-${{ matrix.label }}
           path: |
-            stairspeedtest/logs/**
-            stairspeedtest/engine_stdout.log
-            stairspeedtest/engine_stderr.log
-            stairspeedtest/results/**
+            engine/logs/**
+            engine/engine_stdout.log
+            engine/engine_stderr.log
+            engine/results/**
+            engine/sub_resp.json
+            engine/results.json
           if-no-files-found: warn
           retention-days: 14

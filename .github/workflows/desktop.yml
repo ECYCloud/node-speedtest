@@ -112,6 +112,13 @@ jobs:
 
           ls -la "$ENGINE"
 
+      - name: Upload engine for smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows-x64
+          path: separated/desktop/src-tauri/engine/
+          retention-days: 14
+
       # ---------- 3. 前端 + Tauri 打 NSIS ----------
       - uses: actions/setup-node@v4
         with:
@@ -250,6 +257,13 @@ jobs:
 
           ls -la "$ENGINE"
 
+      - name: Upload engine for smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows-arm64
+          path: separated/desktop/src-tauri/engine/
+          retention-days: 14
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -372,6 +386,13 @@ jobs:
 
           ls -la "$ENGINE"
 
+      - name: Upload engine for smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-darwin-arm64
+          path: separated/desktop/src-tauri/engine/
+          retention-days: 14
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -489,6 +510,13 @@ jobs:
           install -m 0755 "mihomo-darwin-amd64-$MV" "$ENGINE/tools/clients/mihomo"
 
           ls -la "$ENGINE"
+
+      - name: Upload engine for smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-darwin-amd64
+          path: separated/desktop/src-tauri/engine/
+          retention-days: 14
 
       - uses: actions/setup-node@v4
         with:
@@ -627,6 +655,13 @@ jobs:
 
           ls -la "$ENGINE"
           file "$ENGINE/stairspeedtest"
+
+      - name: Upload engine for smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux-x64
+          path: separated/desktop/src-tauri/engine/
+          retention-days: 14
 
       - uses: actions/setup-node@v4
         with:
@@ -777,6 +812,13 @@ jobs:
 
           ls -la "$ENGINE"
           file "$ENGINE/stairspeedtest"
+
+      - name: Upload engine for smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux-arm64
+          path: separated/desktop/src-tauri/engine/
+          retention-days: 14
 
       - uses: actions/setup-node@v4
         with:

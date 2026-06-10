@@ -31,7 +31,12 @@ cleanup() {
     sleep 1
     kill -9 "$PID" 2>/dev/null || true
   fi
-  pkill -f mihomo 2>/dev/null || true
+  # Windows git bash 没 pkill,用 taskkill 兜底
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -f mihomo 2>/dev/null || true
+  elif command -v taskkill >/dev/null 2>&1; then
+    taskkill //F //IM mihomo.exe 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 

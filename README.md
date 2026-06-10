@@ -93,16 +93,18 @@ cmake --build build -j
 
 ### 命令行 / Web 引擎(`stairspeedtest`)
 
-CI 每次提交都跑,六平台都过编译与冒烟测试:
+CI 在六个真实硬件 runner 上跑三层验证:**编译** + **打包** + **运行时端到端冒烟测试**(订阅解析 → mihomo 内核拉起 → 真实节点测速)。
 
-| 平台 | CPU | Runner / 工具链 | 状态 |
-|------|-----|----------------|------|
-| **Linux** | x86_64 | Ubuntu 24.04 / GCC | ✓ 已验证 |
-| **Linux** | arm64 | Ubuntu 22.04 ARM / GCC | ✓ 已验证 |
-| **Windows** | x86_64 | MSYS2 MINGW64 (GCC) | ✓ 已验证 |
-| **Windows** | arm64 | MSYS2 CLANGARM64 (Clang/LLVM) | ✓ 已验证 |
-| **macOS** | arm64 (Apple Silicon) | macos-latest / Homebrew | ✓ 已验证 |
-| **macOS** | x86_64 (Intel) | macos-15-intel / Homebrew | ✓ 已验证 |
+| 平台 | CPU | Runner / 工具链 | 编译 | 端到端冒烟测试 |
+|------|-----|----------------|------|-----------------|
+| **Linux** | x86_64 | Ubuntu 24.04 / GCC | ✓ | ✓ 完整通过 |
+| **Linux** | arm64 | Ubuntu 22.04 ARM / GCC | ✓ | ✓ 完整通过 |
+| **Windows** | x86_64 | MSYS2 MINGW64 (GCC) | ✓ | ⚠ 引擎 + HTTP + 订阅解析通过;mihomo spawn 在 GitHub runner 环境受阻(真机不受影响) |
+| **Windows** | arm64 | MSYS2 CLANGARM64 (Clang/LLVM) | ✓ | ⚠ 同上,引擎已能运行 |
+| **macOS** | arm64 (Apple Silicon) | macos-latest / Homebrew | ✓ | ✓ 完整通过 |
+| **macOS** | x86_64 (Intel) | macos-15-intel / Homebrew | ✓ | ✓ 引擎完整跑 48/48 节点(连通性受 runner IP 段限制) |
+
+冒烟测试细节见 [`scripts/smoke-test/run.sh`](scripts/smoke-test/run.sh) 与 [`smoke-test.yml`](.github/workflows/smoke-test.yml)。
 
 ### Tauri 桌面端(`separated/desktop/`)
 

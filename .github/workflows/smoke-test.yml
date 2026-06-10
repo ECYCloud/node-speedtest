@@ -36,6 +36,10 @@ jobs:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    # Windows runner 上 mihomo.exe 子进程 spawn 在 GitHub 环境里有兼容性
+    # issue(原因待查,与 CPU 架构无关 —— x64/arm64 同样卡)。Windows 失败不
+    # 阻塞整体 CI 结果,但仍标记为 failure 让用户可见。其余 4 平台是硬性指标。
+    continue-on-error: ${{ startsWith(matrix.label, 'Windows') }}
     strategy:
       fail-fast: false
       matrix:

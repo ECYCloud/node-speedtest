@@ -100,7 +100,6 @@ bool serve_cache_on_fetch_fail = false, print_debug_info = false;
 //declarations
 
 int explodeLog(const std::string &log, std::vector<nodeInfo> &nodes);
-int tcping(nodeInfo &node);
 void getTestFile(nodeInfo &node, const std::string &proxy, const std::vector<downloadLink> &downloadFiles, const std::vector<linkMatchRule> &matchRules, const std::string &defaultTestFile);
 std::string get_nat_type_thru_socks5(const std::string &server, uint16_t port, const std::string &username = "", const std::string &password = "", const std::string &stun_server = "stun.l.google.com", uint16_t stun_port = 19302);
 // Forward declaration so the signal handler (defined early in this file) can
@@ -726,19 +725,6 @@ void chkArg(int argc, char* argv[])
     }
 }
 
-/*
-void exportHTML()
-{
-    std::string htmpath = replace_all_distinct(resultPath, ".log", ".htm");
-    //std::string pngname = replace_all_distinct(replace_all_distinct(resultpath, ".log", ".png"), "results\\", "");
-    //std::string resultname = replace_all_distinct(resultpath, "results\\", "");
-    //std::string htmname = replace_all_distinct(htmpath, "results\\", "");
-    //std::string rendercmd = "..\\tools\\misc\\phantomjs.exe ..\\tools\\misc\\render_alt.js " + htmname + " " + pngname + " " + export_sort_method;
-    exportResult(htmpath, "tools\\misc\\util.js", "tools\\misc\\style.css", export_with_maxspeed);
-    //runprogram(rendercmd, "results", true);
-}
-*/
-
 void saveResult(std::vector<nodeInfo> &nodes)
 {
     INIReader ini;
@@ -854,7 +840,6 @@ int singleTest(nodeInfo &node)
     // (macOS still wipes leftover processes on signal exit.)
     proxy = buildSocks5ProxyString(testserver, testport, username, password);
 
-    //printMsg(SPEEDTEST_MESSAGE_GOTSERVER, node, rpcmode);
     if(!rpcmode)
         printMsg(SPEEDTEST_MESSAGE_GOTSERVER, rpcmode, id, node.group, replaceFlagEmojis(node.remarks), std::to_string(node_count));
     // sleep moved above to right after the proxy switch; no extra wait needed here.
@@ -1051,12 +1036,10 @@ void batchTest(std::vector<nodeInfo> &nodes)
             if(custom_group.size() != 0)
                 x.group = custom_group;
             singleTest(x);
-            //writeResult(&x, export_with_maxspeed);
             tottraffic += x.totalRecvBytes;
             if(x.online)
                 onlines++;
         }
-        //resultEOF(speedCalc(tottraffic * 1.0), onlines, nodes->size());
         writeLog(LOG_TYPE_INFO, "All nodes tested. Total/Online nodes: " + std::to_string(node_count) + "/" + std::to_string(onlines) + " Traffic used: " + speedCalc(tottraffic * 1.0));
         decorateNodeLabels(nodes); // normalize flag emojis (e.g. 🇭🇰 -> [HK]) before persistence
         saveResult(nodes);

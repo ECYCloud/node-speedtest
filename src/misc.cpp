@@ -11,24 +11,11 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 
-/*
-#ifdef USE_STD_REGEX
-#include <regex>
-#else
-*/
 #include <jpcre2.hpp>
 typedef jpcre2::select<char> jp;
-//#endif // USE_STD_REGEX
 
 #include <rapidjson/document.h>
 
-/*
-#ifdef USE_MBEDTLS
-#include <mbedtls/md5.h>
-#else
-#include <openssl/md5.h>
-#endif // USE_MBEDTLS
-*/
 #include "md5.h"
 
 #include "misc.h"
@@ -90,16 +77,6 @@ bool fileRenameUtf8(const std::string &from, const std::string &to)
 
 void sleep(int interval)
 {
-    /*
-    #ifdef _WIN32
-        Sleep(interval);
-    #else
-        // Portable sleep for platforms other than Windows.
-        struct timeval wait = { 0, interval * 1000 };
-        select(0, NULL, NULL, NULL, &wait);
-    #endif
-    */
-    //upgrade to c++11 standard
     std::this_thread::sleep_for(std::chrono::milliseconds(interval));
 }
 
@@ -280,13 +257,6 @@ std::string UrlDecode(const std::string& str)
     }
     return strTemp;
 }
-
-/*
-static inline bool is_base64(unsigned char c)
-{
-    return (isalnum(c) || (c == '+') || (c == '/') || (c == '-') || (c == '_'));
-}
-*/
 
 std::string base64_encode(const std::string &string_to_encode)
 {
@@ -517,17 +487,10 @@ std::string getSystemProxy()
         {
             if (strcmp(std::get<0>(x).get(), "ProxyServer") == 0)
             {
-                //std::cout << "ProxyServer: " << (char*)(std::get<2>(x).get()) << std::endl;
                 return std::string((char*)(std::get<2>(x).get()));
             }
         }
     }
-    /*
-    else {
-    	//std::cout << "Proxy not Enabled" << std::endl;
-    }
-    */
-    //return 0;
     return std::string();
 #else
     string_array proxy_env = {"all_proxy", "ALL_PROXY", "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"};
@@ -588,37 +551,6 @@ std::string trim_quote(const std::string &str, bool before, bool after)
 
 std::string getUrlArg(const std::string &url, const std::string &request)
 {
-    //std::smatch result;
-    /*
-    if (regex_search(url.cbegin(), url.cend(), result, std::regex(request + "=(.*?)&")))
-    {
-        return result[1];
-    }
-    else if (regex_search(url.cbegin(), url.cend(), result, std::regex(request + "=(.*)")))
-    {
-        return result[1];
-    }
-    else
-    {
-        return std::string();
-    }
-    */
-    /*
-    std::string::size_type spos = url.find("?");
-    if(spos != url.npos)
-        url.erase(0, spos + 1);
-
-    string_array vArray, arglist = split(url, "&");
-    for(std::string &x : arglist)
-    {
-        std::string::size_type epos = x.find("=");
-        if(epos != x.npos)
-        {
-            if(x.substr(0, epos) == request)
-                return x.substr(epos + 1);
-        }
-    }
-    */
     std::string pattern = request + "=";
     std::string::size_type pos = url.size();
     while(pos)
@@ -650,125 +582,7 @@ std::string replace_all_distinct(std::string str, const std::string &old_value, 
     }
     return str;
 }
-/*
-#ifdef USE_STD_REGEX
-bool regValid(const std::string &reg)
-{
-    try
-    {
-        std::regex r(reg, std::regex::ECMAScript);
-        return true;
-    }
-    catch (std::regex_error &e)
-    {
-        return false;
-    }
-}
 
-bool regFind(const std::string &src, const std::string &match)
-{
-    try
-    {
-        std::regex::flag_type flags = std::regex::extended | std::regex::ECMAScript;
-        std::string target = match;
-        if(match.find("(?i)") == 0)
-        {
-            target.erase(0, 4);
-            flags |= std::regex::icase;
-        }
-        std::regex reg(target, flags);
-        return regex_search(src, reg);
-    }
-    catch (std::regex_error &e)
-    {
-        return false;
-    }
-}
-
-std::string regReplace(const std::string &src, const std::string &match, const std::string &rep)
-{
-    std::string result = "";
-    try
-    {
-        std::regex::flag_type flags = std::regex::extended | std::regex::ECMAScript;
-        std::string target = match;
-        if(match.find("(?i)") == 0)
-        {
-            target.erase(0, 4);
-            flags |= std::regex::icase;
-        }
-        std::regex reg(target, flags);
-        regex_replace(back_inserter(result), src.begin(), src.end(), reg, rep);
-    }
-    catch (std::regex_error &e)
-    {
-        result = src;
-    }
-    return result;
-}
-
-bool regMatch(const std::string &src, const std::string &match)
-{
-    try
-    {
-        std::regex::flag_type flags = std::regex::extended | std::regex::ECMAScript;
-        std::string target = match;
-        if(match.find("(?i)") == 0)
-        {
-            target.erase(0, 4);
-            flags |= std::regex::icase;
-        }
-        std::regex reg(target, flags);
-        return regex_match(src, reg);
-    }
-    catch (std::regex_error &e)
-    {
-        return false;
-    }
-}
-
-int regGetMatch(const std::string &src, const std::string &match, size_t group_count, ...)
-{
-    try
-    {
-        std::regex::flag_type flags = std::regex::extended | std::regex::ECMAScript;
-        std::string target = match;
-        if(match.find("(?i)") == 0)
-        {
-            target.erase(0, 4);
-            flags |= std::regex::icase;
-        }
-        std::regex reg(target, flags);
-        std::smatch result;
-        if(regex_search(src.cbegin(), src.cend(), result, reg))
-        {
-            if(result.size() < group_count - 1)
-                return -1;
-            va_list vl;
-            va_start(vl, group_count);
-            size_t index = 0;
-            while(group_count)
-            {
-                std::string* arg = va_arg(vl, std::string*);
-                if(arg != NULL)
-                    *arg = std::move(result[index]);
-                index++;
-                group_count--;
-            }
-            va_end(vl);
-        }
-        else
-            return -2;
-        return 0;
-    }
-    catch (std::regex_error&)
-    {
-        return -3;
-    }
-}
-
-#else
-*/
 bool regMatch(const std::string &src, const std::string &match)
 {
     jp::Regex reg;
@@ -834,8 +648,6 @@ int regGetMatch(const std::string &src, const std::string &match, size_t group_c
     return 0;
 }
 
-//#endif // USE_STD_REGEX
-
 std::string regTrim(const std::string &src)
 {
     return regReplace(src, "^\\s*([\\s\\S]*)\\s*$", "$1", false, false);
@@ -883,34 +695,6 @@ std::string getMD5(const std::string &data)
 {
     std::string result;
 
-    /*
-    unsigned int i = 0;
-    unsigned char digest[16] = {};
-
-#ifdef USE_MBEDTLS
-    mbedtls_md5_context ctx;
-
-    mbedtls_md5_init(&ctx);
-    mbedtls_md5_starts_ret(&ctx);
-    mbedtls_md5_update_ret(&ctx, reinterpret_cast<const unsigned char*>(data.data()), data.size());
-    mbedtls_md5_finish_ret(&ctx, reinterpret_cast<unsigned char*>(&digest));
-    mbedtls_md5_free(&ctx);
-#else
-    MD5_CTX ctx;
-
-    MD5_Init(&ctx);
-    MD5_Update(&ctx, data.data(), data.size());
-    MD5_Final((unsigned char *)&digest, &ctx);
-#endif // USE_MBEDTLS
-
-    char tmp[3] = {};
-    for(i = 0; i < 16; i++)
-    {
-        snprintf(tmp, 3, "%02x", digest[i]);
-        result += tmp;
-    }
-    */
-
     char result_str[MD5_STRING_SIZE];
     md5::md5_t md5;
     md5.process(data.data(), data.size());
@@ -946,32 +730,12 @@ std::string fileGet(const std::string &path, bool scope_limit)
     {
         std::fseek(fp, 0, SEEK_END);
         long tot = std::ftell(fp);
-        /*
-        char *data = new char[tot + 1];
-        data[tot] = '\0';
-        std::rewind(fp);
-        std::fread(&data[0], 1, tot, fp);
-        std::fclose(fp);
-        content.assign(data, tot);
-        delete[] data;
-        */
         content.resize(tot);
         std::rewind(fp);
         std::fread(&content[0], 1, tot, fp);
         std::fclose(fp);
     }
 
-    /*
-    std::stringstream sstream;
-    std::ifstream infile;
-    infile.open(path, std::ios::binary);
-    if(infile)
-    {
-        sstream<<infile.rdbuf();
-        infile.close();
-        content = sstream.str();
-    }
-    */
     return content;
 }
 
@@ -1020,15 +784,6 @@ std::string fileGetMD5(const std::string &filepath)
 
 int fileWrite(const std::string &path, const std::string &content, bool overwrite)
 {
-    /*
-    std::fstream outfile;
-    std::ios_base::openmode mode = overwrite ? std::ios_base::out : std::ios_base::app;
-    mode |= std::ios_base::binary;
-    outfile.open(path, mode);
-    outfile << content;
-    outfile.close();
-    return 0;
-    */
     const char *mode = overwrite ? "wb" : "ab";
     std::FILE *fp = fopenUtf8(path, mode);
     std::fwrite(content.c_str(), 1, content.size(), fp);
@@ -1176,17 +931,6 @@ int to_int(const std::string &str, int def_value)
 {
     if(str.empty())
         return def_value;
-    /*
-    int retval = 0;
-    char c;
-    std::stringstream ss(str);
-    if(!(ss >> retval))
-        return def_value;
-    else if(ss >> c)
-        return def_value;
-    else
-        return retval;
-    */
     return std::atoi(str.data());
 }
 

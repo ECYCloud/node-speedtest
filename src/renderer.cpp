@@ -63,39 +63,6 @@ int getTextLength(const std::string &str)
     return ((calcLength(str) - str.size()) / 3) * 2 + (str.size() * 2 - calcLength(str)) - count(str.begin(), str.end(), ' ') / 2;
 }
 
-/*
-static inline int calcCharCount(std::string data, int type)
-{
-    int uBound, lBound, total = 0;
-    switch(type)
-    {
-    case 0: //number
-        uBound = 57;
-        lBound = 48;
-        break;
-    case 3: //percent
-        uBound = 37;
-        lBound = 37;
-        break;
-    case 4: //dot
-        uBound = 56;
-        lBound = 56;
-        break;
-    default: //all basic chars
-        uBound = 255;
-        lBound = 0;
-        break;
-    }
-
-    for(unsigned int i = 0; i < data.size(); i++)
-    {
-        if(int(data[i]) >= lBound && int(data[i]) <= uBound)
-            total++;
-    }
-    return total;
-}
-*/
-
 static inline int getWidth(pngwriter *png, const std::string &font, int fontsize, const std::string &text)
 {
     return png->get_text_width_utf8(const_cast<char *>(font.data()), fontsize, const_cast<char *>(text.data()));

@@ -296,18 +296,6 @@ std::string get_nat_type_thru_socks5(const std::string &server, uint16_t port, c
         return NAT_TYPE_STR[FULL_CONE_NAT];
     }
     writeLog(LOG_TYPE_STUN, "STUN Test 2 failed to get response. Trying STUN Test 1 with CHANGED_IP.");
-    //other type of nat
-    /*
-    closesocket(s);
-    closesocket(udp_s);
-    s = initSocket(AF_INET, SOCK_STREAM, 0), udp_s = initSocket(AF_INET, SOCK_DGRAM, 0);
-    std::tie(self_port, udp_port) = socks5_init_udp(s, udp_s, server, port);
-    if(udp_port == 0)
-    {
-        writeLog(LOG_TYPE_STUN, "Failed to start UDP Association with SOCKS5 server. Leaving...");
-        return NAT_TYPE_STR[UNKNOWN];
-    }
-    */
     response = get_stun_response_thru_socks5(udp_s, server, udp_port, change_ip, change_port);
     if(response.failed)
     {

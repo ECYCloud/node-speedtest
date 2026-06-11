@@ -266,11 +266,6 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         return start_flag ? "running" : "stopped";
     });
 
-    /*append_response("GET", "/", "REDIRECT", [](RESPONSE_CALLBACK_ARGS) -> std::string
-    {
-        return "http://web1.ospf.in/";
-    });*/
-
     append_response("GET", "/favicon.ico", "x-icon", [](RESPONSE_CALLBACK_ARGS) -> std::string
     {
         return fileGet("tools/gui/favicon.ico", true);

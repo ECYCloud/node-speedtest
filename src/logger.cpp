@@ -127,9 +127,6 @@ void writeLog(int type, std::string content, int level)
     case LOG_TYPE_GEOIP:
         typestr = "[GEOIP]";
         break;
-    case LOG_TYPE_TCPING:
-        typestr = "[TCPING]";
-        break;
     case LOG_TYPE_FILEDL:
         typestr = "[FILEDL]";
         break;
@@ -138,9 +135,6 @@ void writeLog(int type, std::string content, int level)
         break;
     case LOG_TYPE_RULES:
         typestr = "[RULES]";
-        break;
-    case LOG_TYPE_GPING:
-        typestr = "[GPING]";
         break;
     case LOG_TYPE_RENDER:
         typestr = "[RENDER]";
@@ -157,86 +151,3 @@ void logEOF()
     writeLog(LOG_TYPE_INFO,"Program terminated.");
     fileWrite(logPath, "--EOF--", false);
 }
-
-/*
-
-void resultInit(bool export_with_maxspeed)
-{
-    curtime = getTime(1);
-    resultPath = "results" PATH_SLASH + curtime + ".log";
-    result_content = "group,remarks,loss,ping,avgspeed";
-    if(export_with_maxspeed)
-        result_content += ",maxspeed";
-    result_content += "\n";
-    fileWrite(resultPath, result_content, true);
-}
-
-void writeResult(nodeInfo *node, bool export_with_maxspeed)
-{
-    std::string content = node->group + "," + node->remarks + "," + node->pkLoss + "," + node->avgPing + "," + node->avgSpeed;
-    if(export_with_maxspeed)
-        content += "," + node->maxSpeed;
-    result_content += content + "\n";
-    //write2file(resultPath,result_content.str(),true);
-    writeToFile(resultPath, content, false);
-}
-
-void resultEOF(std::string traffic, int worknodes, int totnodes)
-{
-    result_content += "Traffic used : " + traffic + ". Working Node(s) : [" + std::to_string(worknodes) + "/" + std::to_string(totnodes) + "]\n";
-    result_content += "Generated at " + getTime(3) + "\n";
-    result_content += "By Stair Speedtest " VERSION ".\n";
-    writeToFile(resultPath,result_content,true);
-}
-
-void exportResult(std::string outpath, std::string utiljspath, std::string stylepath, bool export_with_maxspeed)
-{
-    if(utiljspath.empty())
-        return;
-    std::string strInput;
-    vector<std::string> params;
-    ifstream inputjs, inputstyle;
-    ofstream outfile;
-    stringstream result_content_stream;
-    result_content_stream<<result_content;
-    inputjs.open(utiljspath, ios::in);
-    inputstyle.open(stylepath, ios::in);
-    outfile.open(outpath, ios::out);
-    outfile<<"<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" /><style type=\"text/css\">"<<endl;
-    while(getline(inputstyle, strInput))
-    {
-        outfile<<strInput<<endl;
-    }
-    inputstyle.close();
-    outfile<<"</style><script language=\"javascript\">"<<endl;
-    while(getline(inputjs, strInput))
-    {
-        outfile<<strInput<<endl;
-    }
-    inputjs.close();
-    outfile<<"</script></head><body onload=\"loadevent()\"><table id=\"table\" rules=\"all\">";
-    while(getline(result_content_stream, strInput))
-    {
-        if(strInput.empty())
-            continue;
-        if(strFind(strInput, "avgspeed"))
-            continue;
-        if(strFind(strInput, "%,"))
-        {
-            params = split(strInput, ",");
-            outfile<<"<tr><td>"<<params[0]<<"</td><td>"<<params[1]<<"</td><td>"<<params[2]<<"</td><td>"<<params[3]<<"</td><td class=\"speed\">"<<params[4]<<"</td>";
-            if(export_with_maxspeed)
-                outfile<<"<td class=\"speed\">"<<params[5]<<"</td>";
-            outfile<<"</tr>";
-        }
-        if(strFind(strInput, "Traffic used :"))
-            outfile<<"<tr id=\"traffic\"><td>"<<strInput<<"</td></tr>";
-        if(strFind(strInput, "Generated at"))
-            outfile<<"<tr id=\"gentime\"><td>"<<strInput<<"</td></tr>";
-        if(strFind(strInput, "By "))
-            outfile<<"<tr id=\"about\"><td>"<<strInput<<"</td></tr>";
-    }
-    outfile<<"</table></body></html>";
-    outfile.close();
-}
-*/

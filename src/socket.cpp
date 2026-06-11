@@ -260,16 +260,6 @@ std::string sockaddrToIPAddr(sockaddr *addr)
 
 std::string hostnameToIPAddr(std::string host)
 {
-    //old function
-    /*
-        struct in_addr inaddr;
-        hostent *h = gethostbyname(host.data());
-        if(h == NULL)
-            return std::string();
-        inaddr.s_addr = *(u_long*)h->h_addr_list[0];
-        return inet_ntoa(inaddr);
-    */
-    //new function
     int retVal;
     std::string retstr;
     struct addrinfo hint = {}, *retAddrInfo = NULL, *cur;
@@ -290,7 +280,6 @@ std::string hostnameToIPAddr(std::string host)
 int connectSocks5(SOCKET sHost, std::string username, std::string password)
 {
     char buf[BUF_SIZE], bufRecv[BUF_SIZE];
-    //ZeroMemory(buf, BUF_SIZE);
     char* ptr;
     ptr = buf;
     PUT_BYTE(ptr++, 5); //socks5

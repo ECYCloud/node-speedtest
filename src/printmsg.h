@@ -26,10 +26,4 @@ template <typename... Ts> void printMsg(int index, bool rpcmode, Ts&&... args)
     std::cout.flush();
 }
 
-/*
-void printMsg(int index, nodeInfo &node, bool rpcmode);
-void printMsgWithDict(int index, bool rpcmode, std::vector<std::string> dict, std::vector<std::string> trans);
-void printMsgDirect(int index, bool rpcmode);
-*/
-
 #endif // PRINTMSG_H_INCLUDED

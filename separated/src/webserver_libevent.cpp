@@ -103,7 +103,6 @@ const char *request_header_blacklist[] = {"host", "accept", "accept-encoding"};
 static inline void buffer_cleanup(struct evbuffer *eb)
 {
     (void)eb;
-    //evbuffer_free(eb);
 #ifdef MALLOC_TRIM
     malloc_trim(0);
 #endif // MALLOC_TRIM
@@ -246,7 +245,6 @@ void OnReq(evhttp_request *req, void *args)
         return_data = "File not found.";
         evbuffer_add(OutBuf, return_data.data(), return_data.size());
         evhttp_send_reply(req, HTTP_NOTFOUND, "", OutBuf);
-        //evhttp_send_error(req, HTTP_NOTFOUND, "Resource not found");
         break;
     default: //undefined behavior
         evhttp_send_error(req, HTTP_INTERNAL, "");

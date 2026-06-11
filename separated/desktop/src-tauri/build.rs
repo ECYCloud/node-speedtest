@@ -24,5 +24,41 @@ fn main() {
     // 让 build.rs 改动也触发后端重新链接(避免 incremental 缓存)
     println!("cargo:rerun-if-changed=src/lib.rs");
 
+    // 把仓库根的 LICENSE / NOTICE / licenses/ 复制到 src-tauri/ 下,供 tauri.conf.json
+    // 的 bundle.resources 引用。Tauri 不允许 resources 走 ../.. 跳出 src-tauri,
+    // 所以这里在编译时同步一次,git 通过 .gitignore 忽略副本,源唯一在仓库根。
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repo root");
+    let tauri_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for name in ["LICENSE", "NOTICE"] {
+        let src = repo_root.join(name);
+        let dst = tauri_dir.join(name);
+        if src.exists() {
+            std::fs::copy(&src, &dst).unwrap_or_else(|e| {
+                panic!("复制 {} 到 src-tauri 失败: {e}", src.display())
+            });
+            println!("cargo:rerun-if-changed={}", src.display());
+        }
+    }
+    // 第三方依赖许可证(如 mihomo 的 GPL-3.0)放在 licenses/ 子目录下,整目录同步
+    let licenses_src = repo_root.join("licenses");
+    let licenses_dst = tauri_dir.join("licenses");
+    if licenses_src.is_dir() {
+        std::fs::create_dir_all(&licenses_dst).ok();
+        for entry in std::fs::read_dir(&licenses_src).expect("read licenses/") {
+            let entry = entry.expect("dir entry");
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                let from = entry.path();
+                let to = licenses_dst.join(entry.file_name());
+                std::fs::copy(&from, &to).unwrap_or_else(|e| {
+                    panic!("复制 {} 失败: {e}", from.display())
+                });
+                println!("cargo:rerun-if-changed={}", from.display());
+            }
+        }
+    }
+
     tauri_build::build()
 }

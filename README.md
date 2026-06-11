@@ -170,3 +170,11 @@ AppImage 用法:`chmod +x Stair.Speedtest_*.AppImage && ./Stair.Speedtest_*.AppI
 
 ## 待办事项
 * 暂无
+
+## 许可证
+
+本项目基于 [tindy2013/stairspeedtest-reborn](https://github.com/tindy2013/stairspeedtest-reborn) 二次开发,本软件自有代码采用 [MIT 许可证](LICENSE),版权归原作者所有。
+
+分发包内含 [mihomo (Clash.Meta)](https://github.com/MetaCubeX/mihomo) 代理内核作为独立可执行文件(子进程调用,属 GPL-3.0「聚合分发」),mihomo 自身遵循 [GPL-3.0](licenses/GPL-3.0.txt),用户有权按 GPL-3.0 第 6 节向 MetaCubeX 上游或本项目维护者获取其完整源代码。
+
+详细的二改说明、上游版权、第三方依赖与许可证全文见 [NOTICE](NOTICE) 与 [licenses/](licenses/) 目录。安装包内同样附带这些文件。

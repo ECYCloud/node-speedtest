@@ -4,6 +4,7 @@ import { useTheme } from "./store/theme";
 import { startPolling } from "./store/test";
 import { cn } from "./lib/cn";
 import StatusPill from "./components/StatusPill";
+import AboutDialog from "./components/AboutDialog";
 import Speedtest from "./pages/Speedtest";
 import HistoryPage from "./pages/History";
 import SettingsPage from "./pages/SettingsPage";
@@ -36,7 +37,15 @@ function ThemeToggle() {
   );
 }
 
-function Sidebar({ active, onChange }: { active: View; onChange: (v: View) => void }) {
+function Sidebar({
+  active,
+  onChange,
+  onAbout,
+}: {
+  active: View;
+  onChange: (v: View) => void;
+  onAbout: () => void;
+}) {
   return (
     <aside className="flex flex-col w-56 shrink-0 border-r border-border bg-bg-elev/60 backdrop-blur-sm">
       {/* 品牌区:icon 在前、标题在后，始终同一行(Clash Verge Rev 风格)。
@@ -70,10 +79,15 @@ function Sidebar({ active, onChange }: { active: View; onChange: (v: View) => vo
           </button>
         ))}
       </nav>
-      <div className="mt-auto px-3 py-3 text-xs text-fg-muted flex items-center gap-2">
+      {/* 版本号点击打开「关于」对话框,展示 MIT/GPL 来源、仓库链接 */}
+      <button
+        onClick={onAbout}
+        title="关于 Stair Speedtest"
+        className="mt-auto px-3 py-3 text-xs text-fg-muted flex items-center gap-2 hover:bg-border/30 hover:text-fg transition text-left"
+      >
         <Sparkles size={14} />
-        <span>v{__APP_VERSION__} · 桌面版</span>
-      </div>
+        <span>v{__APP_VERSION__}</span>
+      </button>
     </aside>
   );
 }
@@ -94,6 +108,7 @@ function Topbar({ view }: { view: View }) {
 
 export default function App() {
   const [view, setView] = useState<View>("speedtest");
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   useEffect(() => {
     startPolling();
@@ -101,7 +116,7 @@ export default function App() {
 
   return (
     <div className="h-full w-full flex bg-bg text-fg">
-      <Sidebar active={view} onChange={setView} />
+      <Sidebar active={view} onChange={setView} onAbout={() => setAboutOpen(true)} />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar view={view} />
         <main className="flex-1 flex flex-col p-6 overflow-auto min-h-0">
@@ -112,6 +127,7 @@ export default function App() {
           {view === "settings" && <SettingsPage />}
         </main>
       </div>
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   );
 }

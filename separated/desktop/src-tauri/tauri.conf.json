@@ -30,8 +30,14 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "deb", "appimage", "dmg"],
-    "copyright": "MIT License",
-    "resources": ["engine/**/*"],
+    "copyright": "Copyright (c) 2019 tindy2013. Licensed under the MIT License. See LICENSE and NOTICE.",
+    "licenseFile": "LICENSE",
+    "resources": [
+      "engine/**/*",
+      "LICENSE",
+      "NOTICE",
+      "licenses/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

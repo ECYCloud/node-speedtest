@@ -2,7 +2,7 @@ name: Desktop release build
 # Tauri 桌面端 GUI 客户端三平台打包流水线。
 # Windows: NSIS 安装包(MSYS2 MinGW64 + libevent 静态/动态)
 # macOS arm64: DMG(Homebrew + dylibbundler)
-# Linux x64: AppImage + deb(apt + patchelf,RPATH=$ORIGIN)
+# Linux x64: AppImage + deb + rpm(apt + patchelf,RPATH=$ORIGIN)
 #
 # 共同流程:
 #   1. 编 C++ webserver 引擎(开 BUILD_WEBSERVER_ENGINE=ON,链接 libevent)
@@ -567,10 +567,10 @@ jobs:
           draft: false
 
   # ============================================================
-  # Linux x86_64 — AppImage + deb
+  # Linux x86_64 — AppImage + deb + rpm
   # ============================================================
   linux_desktop:
-    name: Linux desktop (Tauri AppImage + deb)
+    name: Linux desktop (Tauri AppImage + deb + rpm)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -684,9 +684,9 @@ jobs:
         working-directory: separated/desktop
         run: npm ci
 
-      - name: Tauri build (AppImage + deb)
+      - name: Tauri build (AppImage + deb + rpm)
         working-directory: separated/desktop
-        run: npm run tauri -- build --bundles appimage deb
+        run: npm run tauri -- build --bundles appimage deb rpm
 
       - name: Locate Linux bundles
         id: locate
@@ -695,11 +695,14 @@ jobs:
           BUNDLE=separated/desktop/src-tauri/target/release/bundle
           APPIMAGE=$(find "$BUNDLE/appimage" -name '*.AppImage' 2>/dev/null | head -n 1)
           DEB=$(find "$BUNDLE/deb" -name '*.deb' 2>/dev/null | head -n 1)
+          RPM=$(find "$BUNDLE/rpm" -name '*.rpm' 2>/dev/null | head -n 1)
           [ -n "$APPIMAGE" ] || { echo "AppImage not produced"; exit 1; }
           [ -n "$DEB" ] || { echo "deb not produced"; exit 1; }
+          [ -n "$RPM" ] || { echo "rpm not produced"; exit 1; }
           {
             echo "appimage=$APPIMAGE"
             echo "deb=$DEB"
+            echo "rpm=$RPM"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
@@ -709,6 +712,7 @@ jobs:
           path: |
             ${{ steps.locate.outputs.appimage }}
             ${{ steps.locate.outputs.deb }}
+            ${{ steps.locate.outputs.rpm }}
           if-no-files-found: error
 
       - name: Attach to Release
@@ -718,15 +722,16 @@ jobs:
           files: |
             ${{ steps.locate.outputs.appimage }}
             ${{ steps.locate.outputs.deb }}
+            ${{ steps.locate.outputs.rpm }}
           draft: false
 
 
   # ============================================================
-  # Linux arm64 — AppImage + deb
+  # Linux arm64 — AppImage + deb + rpm
   # ubuntu-22.04-arm runner + apt 原生 arm64 包
   # ============================================================
   linux_arm64_desktop:
-    name: Linux arm64 desktop (Tauri AppImage + deb)
+    name: Linux arm64 desktop (Tauri AppImage + deb + rpm)
     runs-on: ubuntu-22.04-arm
     steps:
       - uses: actions/checkout@v5
@@ -841,9 +846,9 @@ jobs:
         working-directory: separated/desktop
         run: npm ci
 
-      - name: Tauri build (AppImage + deb, arm64)
+      - name: Tauri build (AppImage + deb + rpm, arm64)
         working-directory: separated/desktop
-        run: npm run tauri -- build --bundles appimage deb
+        run: npm run tauri -- build --bundles appimage deb rpm
 
       - name: Locate Linux bundles
         id: locate
@@ -852,11 +857,14 @@ jobs:
           BUNDLE=separated/desktop/src-tauri/target/release/bundle
           APPIMAGE=$(find "$BUNDLE/appimage" -name '*.AppImage' 2>/dev/null | head -n 1)
           DEB=$(find "$BUNDLE/deb" -name '*.deb' 2>/dev/null | head -n 1)
+          RPM=$(find "$BUNDLE/rpm" -name '*.rpm' 2>/dev/null | head -n 1)
           [ -n "$APPIMAGE" ] || { echo "AppImage not produced"; exit 1; }
           [ -n "$DEB" ] || { echo "deb not produced"; exit 1; }
+          [ -n "$RPM" ] || { echo "rpm not produced"; exit 1; }
           {
             echo "appimage=$APPIMAGE"
             echo "deb=$DEB"
+            echo "rpm=$RPM"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
@@ -866,6 +874,7 @@ jobs:
           path: |
             ${{ steps.locate.outputs.appimage }}
             ${{ steps.locate.outputs.deb }}
+            ${{ steps.locate.outputs.rpm }}
           if-no-files-found: error
 
       - name: Attach to Release
@@ -875,4 +884,5 @@ jobs:
           files: |
             ${{ steps.locate.outputs.appimage }}
             ${{ steps.locate.outputs.deb }}
+            ${{ steps.locate.outputs.rpm }}
           draft: false

@@ -29,8 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "deb", "appimage", "dmg"],
+    "targets": ["nsis", "deb", "rpm", "appimage", "dmg"],
     "copyright": "Copyright (c) 2019 tindy2013. Licensed under the MIT License. See LICENSE and NOTICE.",
+    "license": "MIT",
     "licenseFile": "LICENSE",
     "resources": [
       "engine/**/*",

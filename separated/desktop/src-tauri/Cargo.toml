@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Stair Speedtest 桌面版"
 authors = ["Stair Speedtest"]
 edition = "2021"
+# 项目自身代码 MIT。分发包内含的 mihomo 二进制为 GPL-3.0,属聚合分发,见 NOTICE。
+# 必须显式声明:Tauri 2 RPM bundler 不再从 licenseFile 回退(tauri-apps/tauri#8948),
+# 缺失会导致 RPM License 标签为空。
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

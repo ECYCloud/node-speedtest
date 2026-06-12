@@ -5,8 +5,13 @@ import { computeCurSpeed, computeMaxSpeed } from "../../lib/speed";
 import { CheckCircle2, Activity, Inbox } from "lucide-react";
 
 export default function ResultsPanel() {
-  const { results, current, status } = useTest();
+  const { results, current, status, targetCount } = useTest();
   const running = status === "running";
+  // 已完成的判定:跑完了所有选中节点。targetCount 为 0 时(初次进入页面、未开始测试)
+  // 不该显示"已完成"——回退到旧的 results.length > 0 兜底。
+  // results.length < targetCount → 中途异常或用户停止 → 显示"未完成 (n/m)"。
+  const finished = !running && targetCount > 0 && results.length >= targetCount;
+  const interrupted = !running && targetCount > 0 && results.length > 0 && results.length < targetCount;
 
   // 实时速度与最高速度都基于 rawSocketSpeed 数组用同一套滑动窗口算法在前端计算,
   // 两者严格同源同尺度,UI 上"实时速度峰值"等于"本节点最高",不受 polling 抽样
@@ -24,9 +29,13 @@ export default function ResultsPanel() {
         desc={
           running
             ? "正在测试，实时更新当前节点延迟与下载速度"
-            : results.length > 0
-              ? `共 ${results.length} 个节点已完成`
-              : undefined
+            : interrupted
+              ? `共 ${targetCount} 个节点，仅完成 ${results.length}(测试中断)`
+              : finished
+                ? `共 ${results.length} 个节点已完成`
+                : results.length > 0
+                  ? `共 ${results.length} 个节点已完成`
+                  : undefined
         }
         right={
           running ? (
@@ -34,7 +43,12 @@ export default function ResultsPanel() {
               <Activity size={12} />
               运行中
             </Badge>
-          ) : results.length > 0 ? (
+          ) : interrupted ? (
+            <Badge variant="warning" className="gap-1">
+              <Inbox size={12} />
+              未完成
+            </Badge>
+          ) : finished || results.length > 0 ? (
             <Badge variant="success" className="gap-1">
               <CheckCircle2 size={12} />
               已完成

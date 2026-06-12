@@ -35,6 +35,10 @@ interface TestStore {
   typeFilter: Set<string>;
   loadingConfigs: boolean;
   error: string | null;
+  /** 本轮测试预期的节点总数 = startTest 时选中的节点数。
+      用于 ResultsPanel 区分"已完成(全部测完)"和"未完成(中途停了/异常退出)"。
+      stopped 且 results.length === targetCount → 已完成;否则 → 未完成 (n/m)。 */
+  targetCount: number;
   /** 分组名:用于 PNG 标题、历史记录文件名前缀、统一所有节点的 group 字段。
       在导入节点时填写，留空则后端用第一个节点的协议默认 group。 */
   group: string;
@@ -78,6 +82,7 @@ export const useTest = create<TestStore>((set, get) => ({
   typeFilter: new Set(),
   loadingConfigs: false,
   error: null,
+  targetCount: 0,
   group: "",
   url: "",
   importTab: "sub",
@@ -191,7 +196,7 @@ export const useTest = create<TestStore>((set, get) => ({
       .map((i) => configs[i])
       .filter(Boolean);
     if (!picked.length) return;
-    set({ status: "running", results: [], current: null, error: null });
+    set({ status: "running", results: [], current: null, error: null, targetCount: picked.length });
     try {
       await api.start({ configs: picked, testMode, sortMethod, group: group.trim() });
     } catch (e) {

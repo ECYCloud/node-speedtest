@@ -237,7 +237,11 @@ void OnReq(evhttp_request *req, void *args)
                 evhttp_add_header(req->output_headers, "Content-Type", content_type.c_str());
         }
         evhttp_add_header(req->output_headers, "Access-Control-Allow-Origin", "*");
-        evhttp_add_header(req->output_headers, "Connection", "close");
+        // 不再强制 Connection: close。原先每个响应都关连接,前端短连接洪流让
+        // Windows ephemeral port 进 TIME_WAIT 60s 不释放,大量 invoke 时偶发本地
+        // 端口分配失败 → reqwest 报错 → 前端"后端未连接"。libevent 默认遵循
+        // HTTP/1.1 keep-alive,Rust 端 reqwest 也启用了 pool_idle_timeout,二者
+        // 配合后,/getversion 等高频轮询走的是同一条 TCP,稳定性显著提升。
         evbuffer_add(OutBuf, return_data.data(), return_data.size());
         evhttp_send_reply(req, response.status_code, "", OutBuf);
         break;

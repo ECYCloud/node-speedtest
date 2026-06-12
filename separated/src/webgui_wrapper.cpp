@@ -70,12 +70,24 @@ void ssrspeed_regenerate_node_list(rapidjson::Document &json)
         return;
     }
 
+    // 单条解析失败不打断整批 —— 任何一条 configs[i] 不是 object、缺 config
+    // 子对象、或 server_port 不是数字时,以前 stoi 直接抛 invalid_argument,
+    // 异常上抛到 detached 线程的顶层 catch 让 batchTest 根本不会执行,前端
+    // 表现为"点开始无反应"。这里收敛到单条:坏数据跳过,好数据继续匹配。
+    auto safePort = [](const std::string &s) -> int {
+        try { return s.empty() ? 0 : std::stoi(s); }
+        catch(...) { return 0; }
+    };
     for(unsigned int i = 0; i < json["configs"].Size(); i++)
     {
-        group = GetMember(json["configs"][i]["config"], "group");
-        remarks = GetMember(json["configs"][i]["config"], "remarks");
-        server = GetMember(json["configs"][i]["config"], "server");
-        server_port = stoi(GetMember(json["configs"][i]["config"], "server_port"));
+        const auto &item = json["configs"][i];
+        if(!item.IsObject() || !item.HasMember("config") || !item["config"].IsObject())
+            continue;
+        const auto &cfg = item["config"];
+        group = GetMember(cfg, "group");
+        remarks = GetMember(cfg, "remarks");
+        server = GetMember(cfg, "server");
+        server_port = safePort(GetMember(cfg, "server_port"));
         auto iter = std::find_if(allNodes.begin(), allNodes.end(), [&](auto x){ return x.group == group && x.remarks == remarks && x.server == server && x.port == server_port; });
         if(iter != allNodes.end())
             targetNodes.push_back(*iter);
@@ -140,7 +152,10 @@ void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInf
     }
     writer.EndArray();
     writer.Key("gPingLoss");
-    writer.Double(counter / total * 1.0);
+    // 老写法 `counter / total * 1.0` 是 int 整除再升 double,小数位永远 0 或 1;
+    // 且 rawSitePing 为空数组时 total=0 → 整数除 0 UB。改为先升 double 再除,
+    // 并对 total==0 显式返 0。
+    writer.Double(total > 0 ? static_cast<double>(counter) / total : 0.0);
     writer.Key("webPageSimulation");
     writer.String("N/A");
     writer.Key("geoIP");
@@ -387,42 +402,78 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         return ssrspeed_generate_results(targetNodes);
     });
 
-    // 同步检查 mihomo 内核更新:调 GitHub /releases/latest 拿 tag_name,与本地
-    // 内核版本比对。复用 webGet 自带的 User-Agent(GitHub API 必需)+ rapidjson。
-    // 失败时 has_update=false 且 latest 为空,前端据此显示"检查失败"。
+    // 异步检查 mihomo 内核更新:维持文件级 cache,handler 立刻返 cache,
+    // cache 过期或缺失时由后台线程刷新。原先同步 webGet GitHub API 会阻塞
+    // 当前 worker 线程最长 15s(国内网络通常受限),期间该 worker 上排队
+    // 的 /getversion 直接 timeout → 前端"后端未连接"。
     append_response("GET", "/checkupdate", "application/json;charset=utf-8", [](RESPONSE_CALLBACK_ARGS) -> std::string
     {
+        (void)request;
+        // 30 分钟刷新一次足够;期间多次访问都直接命中 cache。
+        static const time_t CACHE_TTL = 1800;
+        static std::mutex cache_mu;
+        static std::string cached_latest;
+        static std::string cached_error;
+        static bool cached_has_update = false;
+        static time_t cached_at = 0;
+        static std::atomic<bool> refreshing(false);
+
         std::string local = mihomo_kernel_version;
         std::string latest;
-        bool has_update = false;
         std::string error;
-        try
+        bool has_update = false;
+        bool stale;
         {
-            std::string body = webGet("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", "", 0);
-            if(body.empty())
-                error = "GitHub API 无响应(网络受限或被防火墙拦截)";
-            else
+            std::lock_guard<std::mutex> lk(cache_mu);
+            latest = cached_latest;
+            error = cached_error;
+            has_update = cached_has_update;
+            stale = (cached_at == 0) || (time(NULL) - cached_at > CACHE_TTL);
+        }
+
+        // cache 过期或从未拉取过:派一个后台线程去刷新。同一时刻只允许一个刷新任务。
+        if(stale && !refreshing.exchange(true))
+        {
+            std::thread([]()
             {
-                rapidjson::Document j;
-                j.Parse(body.data());
-                if(j.HasParseError() || !j.HasMember("tag_name") || !j["tag_name"].IsString())
-                    error = "GitHub API 返回了非预期的内容";
-                else
+                std::string new_latest, new_error;
+                bool new_has = false;
+                try
                 {
-                    latest = j["tag_name"].GetString();
-                    if(!latest.empty() && !local.empty())
-                        has_update = compareKernelVersion(latest, local) > 0;
+                    std::string body = webGet("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", "", 0);
+                    if(body.empty())
+                        new_error = "GitHub API 无响应(网络受限或被防火墙拦截)";
+                    else
+                    {
+                        rapidjson::Document j;
+                        j.Parse(body.data());
+                        if(j.HasParseError() || !j.HasMember("tag_name") || !j["tag_name"].IsString())
+                            new_error = "GitHub API 返回了非预期的内容";
+                        else
+                        {
+                            new_latest = j["tag_name"].GetString();
+                            if(!new_latest.empty() && !mihomo_kernel_version.empty())
+                                new_has = compareKernelVersion(new_latest, mihomo_kernel_version) > 0;
+                        }
+                    }
                 }
-            }
+                catch(const std::exception &e) { new_error = std::string("检查失败:") + e.what(); }
+                catch(...) { new_error = "检查失败(未知异常)"; }
+                {
+                    std::lock_guard<std::mutex> lk(cache_mu);
+                    cached_latest = new_latest;
+                    cached_error = new_error;
+                    cached_has_update = new_has;
+                    cached_at = time(NULL);
+                }
+                refreshing.store(false);
+            }).detach();
         }
-        catch(const std::exception &e)
-        {
-            error = std::string("检查失败:") + e.what();
-        }
-        catch(...)
-        {
-            error = "检查失败(未知异常)";
-        }
+
+        // 第一次请求 cache 还是空,在响应里给个温和提示让前端知道"正在检查"
+        if(latest.empty() && error.empty() && cached_at == 0)
+            error = "正在检查...";
+
         rapidjson::StringBuffer sb;
         rapidjson::Writer<rapidjson::StringBuffer> w(sb);
         w.StartObject();

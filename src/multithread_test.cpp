@@ -119,7 +119,9 @@ int _thread_download(std::string host, int port, std::string uri, std::string lo
     if(INVALID_SOCKET == sHost)
         return -1;
     push_socket(sHost);
-    setTimeout(sHost, 5000);
+    // SOCKS5 应答阻塞读会等到 mihomo 完成出站节点拨号 + 握手才返回。
+    // QUIC/TLS 慢节点首次握手常超 5s,把 IO 超时放宽到 10s 避免 4 线程齐死 → 0 字节 → N/A。
+    setTimeout(sHost, 10000);
     if(startConnect(sHost, localaddr, localport) == SOCKET_ERROR || connectSocks5(sHost, username, password) == -1 || connectThruSocks(sHost, host, port) == -1)
         return -1;
 
@@ -131,7 +133,7 @@ int _thread_download(std::string host, int port, std::string uri, std::string lo
         ctx = SSL_CTX_new(TLS_client_method());
         if(ctx == NULL)
         {
-            ERR_print_errors_fp(stderr);
+            writeLog(LOG_TYPE_ERROR, "SSL_CTX_new failed for download.");
             return -1;
         }
         defer(SSL_CTX_free(ctx);)
@@ -139,36 +141,37 @@ int _thread_download(std::string host, int port, std::string uri, std::string lo
         ssl = SSL_new(ctx);
         defer(SSL_free(ssl);)
         SSL_set_fd(ssl, sHost);
+        // SNI 必备:Cloudflare 等多租户 CDN 收到无 server_name 的 ClientHello
+        // 直接回 alert 40 (handshake_failure),4 个并发线程齐死 → 0 字节 → "N/A"。
+        SSL_set_tlsext_host_name(ssl, host.c_str());
 
         if(SSL_connect(ssl) != 1)
         {
-            ERR_print_errors_fp(stderr);
+            writeLog(LOG_TYPE_FILEDL, "TLS handshake failed for " + host + " (likely server alert / SNI mismatch).");
+            return -1;
         }
-        else
+        retVal = SSL_write(ssl, request.data(), request.size());
+        if(retVal == SOCKET_ERROR)
+            return -1;
+        while(1)
         {
-            retVal = SSL_write(ssl, request.data(), request.size());
-            if(retVal == SOCKET_ERROR)
-                return -1;
-            while(1)
+            cur_len = SSL_read(ssl, bufRecv, BUF_SIZE - 1);
+            if(cur_len < 0)
             {
-                cur_len = SSL_read(ssl, bufRecv, BUF_SIZE - 1);
-                if(cur_len < 0)
+                if(errno == EWOULDBLOCK || errno == EAGAIN)
                 {
-                    if(errno == EWOULDBLOCK || errno == EAGAIN)
-                    {
-                        continue;
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    continue;
                 }
-                if(cur_len == 0)
+                else
+                {
                     break;
-                received_bytes += cur_len;
-                if(EXIT_FLAG)
-                    break;
+                }
             }
+            if(cur_len == 0)
+                break;
+            received_bytes += cur_len;
+            if(EXIT_FLAG)
+                break;
         }
     }
     else
@@ -217,7 +220,7 @@ int _thread_upload(std::string host, int port, std::string uri, std::string loca
     if(INVALID_SOCKET == sHost)
         return -1;
     push_socket(sHost);
-    setTimeout(sHost, 5000);
+    setTimeout(sHost, 10000);
     if(startConnect(sHost, localaddr, localport) == SOCKET_ERROR || connectSocks5(sHost, username, password) == -1 || connectThruSocks(sHost, host, port) == -1)
         return -1;
 
@@ -229,7 +232,7 @@ int _thread_upload(std::string host, int port, std::string uri, std::string loca
         ctx = SSL_CTX_new(TLS_client_method());
         if(ctx == NULL)
         {
-            ERR_print_errors_fp(stderr);
+            writeLog(LOG_TYPE_ERROR, "SSL_CTX_new failed for upload.");
             return -1;
         }
         defer(SSL_CTX_free(ctx);)
@@ -237,26 +240,25 @@ int _thread_upload(std::string host, int port, std::string uri, std::string loca
         ssl = SSL_new(ctx);
         defer(SSL_free(ssl);)
         SSL_set_fd(ssl, sHost);
+        SSL_set_tlsext_host_name(ssl, host.c_str());
 
         if(SSL_connect(ssl) != 1)
         {
-            ERR_print_errors_fp(stderr);
+            writeLog(LOG_TYPE_FILEUL, "TLS handshake failed for " + host + " (upload).");
+            return -1;
         }
-        else
+        SSL_write(ssl, request.data(), request.size());
+        while(1)
         {
-            SSL_write(ssl, request.data(), request.size());
-            while(1)
+            post_data = rand_str(128);
+            cur_len = SSL_write(ssl, post_data.data(), post_data.size());
+            if(cur_len == SOCKET_ERROR)
             {
-                post_data = rand_str(128);
-                cur_len = SSL_write(ssl, post_data.data(), post_data.size());
-                if(cur_len == SOCKET_ERROR)
-                {
-                    break;
-                }
-                received_bytes += cur_len;
-                if(EXIT_FLAG)
-                    break;
+                break;
             }
+            received_bytes += cur_len;
+            if(EXIT_FLAG)
+                break;
         }
     }
     else
@@ -337,14 +339,37 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
     //std::thread threads[thread_count];
     std::vector<pthread_t> threads(thread_count);
     launched = 0;
+    int created = 0;
     for(i = 0; i != thread_count; i++)
     {
         writeLog(LOG_TYPE_FILEDL, "Starting up thread #" + std::to_string(i + 1) + ".");
-        //threads[i] = std::thread(_thread_download, host, port, uri, localaddr, localport, username, password, useTLS);
-        pthread_create(&threads[i], NULL, _thread_download_caller, &args);
+        if(pthread_create(&threads[i], NULL, _thread_download_caller, &args) == 0)
+            created++;
+        else
+            writeLog(LOG_TYPE_ERROR, "pthread_create failed for download thread #" + std::to_string(i + 1));
     }
-    while(!launched)
-        sleep(20); //wait until any one of the threads start up
+    if(created == 0)
+    {
+        writeLog(LOG_TYPE_ERROR, "All download threads failed to start; aborting test for this node.");
+        return -1;
+    }
+    // 等任一线程进入函数体把 launched 自增 — 但带 3s 上限避免线程全部
+    // pthread_create 成功却被 sched 长期挂起时主线程死锁。
+    {
+        int waited = 0;
+        while(!launched && waited < 3000)
+        {
+            sleep(20);
+            waited += 20;
+        }
+        if(!launched)
+        {
+            writeLog(LOG_TYPE_ERROR, "No download thread reached entry within 3s; aborting test for this node.");
+            EXIT_FLAG = true;
+            for(int k = 0; k < thread_count; ++k) pthread_join(threads[k], NULL);
+            return -1;
+        }
+    }
 
     writeLog(LOG_TYPE_FILEDL, "All threads launched. Start accumulating data.");
     auto start = steady_clock::now();
@@ -460,14 +485,38 @@ int upload_test(nodeInfo &node, std::string localaddr, int localport, std::strin
     pthread_t workers[2];
     thread_args args = {host, port, uri, localaddr, localport, username, password, useTLS};
     launched = 0;
+    int created = 0;
     for(i = 0; i < 1; i++)
     {
         writeLog(LOG_TYPE_FILEUL, "Starting up worker thread #" + std::to_string(i + 1) + ".");
-        //workers[i] = std::thread(_thread_upload, host, port, uri, localaddr, localport, username, password, useTLS);
-        pthread_create(&workers[i], NULL, _thread_upload_caller, &args);
+        if(pthread_create(&workers[i], NULL, _thread_upload_caller, &args) == 0)
+            created++;
+        else
+            writeLog(LOG_TYPE_ERROR, "pthread_create failed for upload worker #" + std::to_string(i + 1));
     }
-    while(!launched)
-        sleep(20); //wait until worker thread starts up
+    if(created == 0)
+    {
+        writeLog(LOG_TYPE_ERROR, "All upload workers failed to start; aborting upload for this node.");
+        node.ulSpeed = "N/A";
+        return -1;
+    }
+    // 见 perform_test:用 3s 上限避免线程被 sched 长期挂起时主线程死锁。
+    {
+        int waited = 0;
+        while(!launched && waited < 3000)
+        {
+            sleep(20);
+            waited += 20;
+        }
+        if(!launched)
+        {
+            writeLog(LOG_TYPE_ERROR, "No upload worker reached entry within 3s; aborting upload for this node.");
+            EXIT_FLAG = true;
+            for(int k = 0; k < 1; ++k) pthread_join(workers[k], NULL);
+            node.ulSpeed = "N/A";
+            return -1;
+        }
+    }
 
     writeLog(LOG_TYPE_FILEUL, "Worker threads launched. Start accumulating data.");
     auto start = steady_clock::now();

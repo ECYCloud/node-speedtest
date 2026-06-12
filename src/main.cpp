@@ -318,6 +318,50 @@ bool mihomoWaitReady(int timeout_ms = 5000)
     return false;
 }
 
+// 轻量探活:连一下 127.0.0.1:9990,连得上即视为内核还在监听 Clash API。
+// 故意不发 HTTP 请求,避免被 mihomo 假死时长时间 hang;用 1.5s 的连接超时
+// 触发立刻失败,避免拖慢测试节奏。
+//
+// 已知局限:仅探测 TCP 端口可达,不探 mihomo goroutine 状态。"端口在但内核
+// 半死"的极端情况下会漏检 — 这种情况下 SwitchProxy 会失败,旧 outbound 上
+// 的下载也会失败,与"进程不在"等价 — 触发外层 ensureAlive 同样会重启。
+bool mihomoIsAlive()
+{
+    SOCKET s = initSocket(getNetworkType("127.0.0.1"), SOCK_STREAM, IPPROTO_TCP);
+    if(s == INVALID_SOCKET) return false;
+    setTimeout(s, 1500);
+    int rc = startConnect(s, "127.0.0.1", 9990);
+    closesocket(s);
+    return rc != SOCKET_ERROR;
+}
+
+// 节点测试前的健康守护:mihomo 内核中途崩溃后,后面所有节点都会因 9990 / 65432
+// 拒连而 N/A。用户视角就是"测着测着后面节点全测不出"。
+// 这里在每个节点开测前调用一次,死了就用既有的 config.yaml + provider 重新拉起,
+// outbound 列表自动恢复,本次测试可以无缝续跑。
+//
+// 设计原则:
+//  * 探活只 ~1ms(一次本地 TCP connect),不影响正常节奏
+//  * 死了只重启一次;重启失败就放弃,让本节点跑完拿 N/A 而不是死循环
+//  * 不动 yaml/provider 文件,不重新 buildProvidersConfig — 那已是上一轮 launch 写好的
+bool mihomoEnsureAlive()
+{
+    if(mihomoIsAlive()) return true;
+    writeLog(LOG_TYPE_WARN, "mihomo Clash API 不可达,内核可能已退出,尝试重启...");
+#ifdef _WIN32
+    killProgram("mihomo.exe");
+#else
+    killProgram("mihomo");
+#endif
+    runClient(0);
+    bool ok = mihomoWaitReady(8000);
+    if(ok)
+        writeLog(LOG_TYPE_INFO, "mihomo 重启完成,继续测试。");
+    else
+        writeLog(LOG_TYPE_ERROR, "mihomo 重启后 8s 内仍未就绪,本节点将取得 N/A。");
+    return ok;
+}
+
 // Switch the GLOBAL selector to the given outbound name. Returns true on 2xx.
 bool mihomoSwitchProxy(const std::string &name)
 {
@@ -330,27 +374,18 @@ bool mihomoSwitchProxy(const std::string &name)
     return false;
 }
 
-// 走 mihomo Clash API 的 /proxies/<name>/delay 测延迟。
-//
-// 为什么不用 libcurl 直接通过 socks5 探测?
-//   * libcurl 短连接 + socks5 + mihomo 中转 + hy2/QUIC 拨号四层链路，
-//     hy2 等 QUIC 协议首包慢，经常 10-20s 内拿不到 200 响应，
-//     表现就是 hy2 节点测速能跑(长连接已建立)，但延迟列全 N/A。
-//   * mihomo 内置的 /delay 由内核直接拨节点，对所有协议(含 QUIC)
-//     都有稳定的延迟数值，这是 Clash Verge / Karing 等 GUI 也在用的接口。
-//
-// 返回:成功时把延迟 ms 写入 *out_ms 并返回 true;失败 false。
-// 端点形如 http://127.0.0.1:9990/proxies/<urlencoded-name>/delay?url=...&timeout=5000
+// 首选 mihomo Clash API /proxies/<name>/delay:与 Clash Verge / Karing 等
+// 客户端同源,unified-delay 模式下数字可比、绝对值贴近真实 RTT。
+// 端点形如 http://127.0.0.1:9990/proxies/<urlencoded-name>/delay?url=...&timeout=8000
 static bool mihomoMeasureDelay(const std::string &proxy_name, int *out_ms,
                                const std::string &url = "https://cp.cloudflare.com/generate_204",
-                               int timeout_ms = 5000)
+                               int timeout_ms = 8000)
 {
     std::string ep = "http://127.0.0.1:9990/proxies/" + UrlEncode(proxy_name) +
                      "/delay?timeout=" + std::to_string(timeout_ms) +
                      "&url=" + UrlEncode(url);
     std::string body = webGet(ep, "", 0);
     if(body.empty()) return false;
-    // 响应形如 {"delay": 123} 或 {"message":"An error occurred ..."}
     rapidjson::Document j;
     j.Parse(body.data());
     if(j.HasParseError()) return false;
@@ -358,6 +393,26 @@ static bool mihomoMeasureDelay(const std::string &proxy_name, int *out_ms,
     int v = static_cast<int>(j["delay"].GetDouble());
     if(v <= 0) return false;
     if(out_ms) *out_ms = v;
+    return true;
+}
+
+// 兜底:mihomo /delay 失败(常见于 hy2/anytls 等 QUIC 节点对内核内置 HEAD 不友好,
+// 或测试 URL 被节点出口运营商拦截)时,改走 libcurl 经 mihomo socks5 自己发 HEAD。
+// 口径不同 — 含一次完整拨号+握手+HEAD 的 wall clock,数字会偏高,但比显示 N/A 好,
+// 用户至少能看到节点是"通的、慢" vs "完全不通"的差异。
+static bool socks5MeasureDelay(const std::string &socks_addr, int socks_port,
+                               int *out_ms,
+                               const std::string &url = "https://cp.cloudflare.com/generate_204")
+{
+    std::string proxy = buildSocks5ProxyString(socks_addr, socks_port, "", "");
+    std::string headers;
+    auto t0 = std::chrono::steady_clock::now();
+    int code = webHead(url, proxy, string_array{}, headers);
+    auto t1 = std::chrono::steady_clock::now();
+    if(code < 200 || code >= 400) return false;
+    int ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+    if(ms <= 0) return false;
+    if(out_ms) *out_ms = ms;
     return true;
 }
 
@@ -828,9 +883,31 @@ int singleTest(nodeInfo &node)
     testport = socksport;
     if(!node.proxyStr.empty() && node.proxyStr != "LOG")
     {
+        // 健康守护:本节点开测前先确认 mihomo 还活着,死了就用既有 config 重启。
+        // 不依赖 mihomoSwitchProxy 的失败重试 — 一旦内核进程退出,SwitchProxy
+        // / SOCKS5 / /delay 全数 connect refused,只重试 SwitchProxy 救不回来。
+        mihomoEnsureAlive();
         writeLog(LOG_TYPE_INFO, "Switching mihomo outbound to '" + node.proxyStr + "'...");
         if(!mihomoSwitchProxy(node.proxyStr))
-            writeLog(LOG_TYPE_WARN, "Proxy switch failed; the test will probably show no speed.");
+        {
+            // 失败立刻重试一次 — 端口刚才确认是活的,失败原因常见是 mihomo 在
+            // 加载 provider 的瞬间把 GLOBAL selector 暂时锁住,200ms 后再 PUT
+            // 通常就成功。重试还失败才算真死,直接放弃本节点 — 否则 outbound
+            // 还停在上一节点上,本节点测的会是上一节点的速度,污染结果表。
+            sleep(200);
+            if(!mihomoSwitchProxy(node.proxyStr))
+            {
+                writeLog(LOG_TYPE_ERROR, "Proxy switch failed twice for '" + node.proxyStr + "', skipping this node to avoid measuring stale outbound.");
+                node.avgPing = "0.00";
+                node.sitePing = "0.00";
+                node.pkLoss = "100.00%";
+                node.avgSpeed = "N/A";
+                node.maxSpeed = "N/A";
+                node.ulSpeed = "N/A";
+                node.online = false;
+                return SPEEDTEST_ERROR_NOSPEED;
+            }
+        }
         // mihomo 切完 outbound 之后，QUIC 类协议(hy2/anytls/tuic)需要更长
         // 时间完成新链路握手 — TCP 协议 200ms 够，UDP 类至少 800ms 才稳。
         // 给所有协议统一 800ms 是最简单且不会拖慢太多的方案。
@@ -893,16 +970,29 @@ int singleTest(nodeInfo &node)
         }
         else
         {
-            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API (single probe, Clash Verge-compatible)...");
+            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API...");
             int ms = 0;
-            if(mihomoMeasureDelay(node.proxyStr, &ms, https_probe_url, 5000))
+            if(mihomoMeasureDelay(node.proxyStr, &ms, https_probe_url))
             {
                 rawms[0] = ms;
                 latency_ms = static_cast<double>(ms);
             }
             else
             {
-                writeLog(LOG_TYPE_WARN, "mihomo /delay probe failed for '" + node.proxyStr + "'");
+                // hy2 / anytls 等 QUIC 节点对 mihomo 内置 HEAD 不友好(已在历史
+                // 测试 log 中观察到延迟 0 但下载正常),改走 socks5 自己测一次。
+                writeLog(LOG_TYPE_WARN, "mihomo /delay failed for '" + node.proxyStr + "', trying socks5 HEAD fallback...");
+                int fb_ms = 0;
+                if(socks5MeasureDelay(testserver, testport, &fb_ms, https_probe_url))
+                {
+                    rawms[0] = fb_ms;
+                    latency_ms = static_cast<double>(fb_ms);
+                    writeLog(LOG_TYPE_INFO, "socks5 HEAD fallback succeeded: " + std::to_string(fb_ms) + " ms");
+                }
+                else
+                {
+                    writeLog(LOG_TYPE_WARN, "socks5 HEAD fallback also failed.");
+                }
             }
         }
 
@@ -922,13 +1012,10 @@ int singleTest(nodeInfo &node)
             node.sitePing.assign(t);
             writeLog(LOG_TYPE_INFO, "Latency: " + node.sitePing + " ms");
         }
-        // 连通性以下载是否成功为准，延迟探测失败不算硬错误
-        node.pkLoss = latency_ms < 0.0 ? "100.00%" : "0.00%";
     }
-    else
-    {
-        node.pkLoss = "0.00%";
-    }
+    // pkLoss 在下载阶段后由实际下载结果决定:0 字节 → 100%,有数据 → 0%。
+    // 延迟探测失败不影响 pkLoss(用户反馈"延迟测不出但下载正常"的场景需保留 online)。
+    node.pkLoss = "0.00%";
     printMsg(SPEEDTEST_MESSAGE_GOTPING, rpcmode, id, node.avgPing, node.pkLoss);
 
     getTestFile(node, proxy, downloadFiles, matchRules, def_test_file);
@@ -1035,7 +1122,23 @@ void batchTest(std::vector<nodeInfo> &nodes)
 #endif
             if(custom_group.size() != 0)
                 x.group = custom_group;
-            singleTest(x);
+            // per-node 异常隔离:单节点异常(rapidjson assert / mihomo JSON 异常 /
+            // socks5 状态机异常等)以前会冲出 batchTest 让 webgui 顶层 catch 兜住,
+            // 后续节点全部被跳过 + saveResult/cur_node_id=-1 不再执行,前端拉到的
+            // 是"半套结果 + status=stopped",体感"测了 20 / 48 就显示已完成"。
+            // 这里把单节点失败收敛在节点内,整批继续跑完。
+            try
+            {
+                singleTest(x);
+            }
+            catch(const std::exception &e)
+            {
+                writeLog(LOG_TYPE_ERROR, std::string("Node test exception: ") + x.remarks + " — " + e.what());
+            }
+            catch(...)
+            {
+                writeLog(LOG_TYPE_ERROR, "Node test exception (unknown): " + x.remarks);
+            }
             tottraffic += x.totalRecvBytes;
             if(x.online)
                 onlines++;

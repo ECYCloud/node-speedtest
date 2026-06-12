@@ -1,9 +1,14 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, RunEvent, State};
+
+/// supervisor 退出标志:RunEvent::Exit 时置 true,supervisor loop 见到立刻退出,
+/// 避免应用关闭瞬间(主进程已经 kill 掉子进程)还触发"自动重启"把僵尸再拉起来。
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// 后端进程统一监听地址,与 stairspeedtest pref.ini 的 [webserver] 默认值保持一致
 const BACKEND_URL: &str = "http://127.0.0.1:10870";
@@ -220,6 +225,90 @@ fn spawn_backend(app: &AppHandle) -> Result<Child, String> {
     }
 
     cmd.spawn().map_err(|e| format!("启动后端失败: {e}"))
+}
+
+/// sidecar supervisor:每 3 秒检查后端子进程是否还活着,崩了就清理孤儿 + 重启。
+///
+/// 根因:此前 spawn_backend 后没人监督,后端一旦崩溃(rapidjson assert / 内核段错误 / 内存
+/// 异常),前端 Status 就永远红下去,用户必须自己点"设置 → 重启后端"才能恢复。
+/// 现在做成自愈:用户基本无感知,UI 最多红几秒。
+///
+/// 与 restart_backend 共用 BackendState.child 这把锁:supervisor 持锁判断 + 持锁 spawn,
+/// restart_backend 也持锁到 spawn 完成,二者不会 race 出"中间态 None → 误重启"。
+async fn supervisor_loop(handle: AppHandle) {
+    use std::time::{Duration, Instant};
+    // 启动后给主流程 5 秒缓冲,等首个 spawn_backend 落定再开始监督
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let mut last_restart_at = Instant::now() - Duration::from_secs(60);
+    loop {
+        if SHUTTING_DOWN.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if SHUTTING_DOWN.load(Ordering::SeqCst) {
+            return;
+        }
+
+        // 持锁判断:try_wait 需要 &mut Child,直接在 guard 里调
+        let need_respawn = {
+            let state = handle.state::<BackendState>();
+            let mut guard = match state.child.lock() {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
+            match guard.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(Some(status)) => {
+                        eprintln!("[supervisor] 后端进程已退出 (status={status:?}),将重启");
+                        *guard = None;
+                        true
+                    }
+                    Ok(None) => false,
+                    Err(e) => {
+                        eprintln!("[supervisor] try_wait 出错: {e},按崩溃处理");
+                        *guard = None;
+                        true
+                    }
+                },
+                // None 表示 setup 时 spawn 失败、或 restart_backend 异常路径,
+                // 也补一次自动起
+                None => true,
+            }
+        };
+
+        if !need_respawn {
+            continue;
+        }
+
+        // 防抖:两次重启至少间隔 3s,避免持续崩溃时拉起风暴
+        let now = Instant::now();
+        if now.duration_since(last_restart_at) < Duration::from_secs(3) {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if SHUTTING_DOWN.load(Ordering::SeqCst) {
+                return;
+            }
+        }
+        last_restart_at = Instant::now();
+
+        cleanup_orphans();
+        if let Err(e) = ensure_runtime_engine(&handle) {
+            eprintln!("[supervisor] ensure_runtime_engine 失败: {e}");
+            continue;
+        }
+        // 持锁 spawn,避免 supervisor 自己下一轮见到 None 又触发一次
+        let state = handle.state::<BackendState>();
+        let mut guard = match state.child.lock() {
+            Ok(g) => g,
+            Err(_) => continue,
+        };
+        match spawn_backend(&handle) {
+            Ok(c) => {
+                *guard = Some(c);
+                eprintln!("[supervisor] 后端已自动重启");
+            }
+            Err(e) => eprintln!("[supervisor] 自动重启失败: {e}"),
+        }
+    }
 }
 
 /// 在 Windows 上调用 taskkill / 其他外部命令,加 CREATE_NO_WINDOW 防止闪现 cmd 窗口
@@ -444,17 +533,57 @@ fn show_main_window(app: AppHandle) {
 /// 关键:**.no_proxy()** 绕过系统代理。用户开了系统代理(HTTP_PROXY)时,
 /// reqwest 默认会通过代理转发请求,但代理通常不允许中转 127.0.0.1,
 /// 导致 POST /start、POST /readsubscriptions 全失败 → 测试全 N/A。
-/// 这是之前所有"测试无法跑"问题的真正根因。
+///
+/// 稳定性参数:
+///   - connect_timeout(2s):127.0.0.1 偶发 SYN 失败时立刻报错,而不是吊死
+///     在整体 timeout 上让前端 Status 红屏几十秒
+///   - pool_idle_timeout(20s) + tcp_keepalive(15s):后端 keep-alive 开启后
+///     复用连接,避免短连接洪流让 Windows ephemeral port 紧张
+///   - timeout(15s):轻量请求(/getversion /status /getresults /stop)预算
+///     绰绰有余;重型请求(/start /readsubscriptions /readfileconfig)走
+///     long_backend_client(60s)。
 fn local_backend_client() -> &'static reqwest::Client {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .no_proxy()
-            .timeout(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(2))
+            .pool_idle_timeout(std::time::Duration::from_secs(20))
+            .tcp_keepalive(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(15))
             .build()
             .expect("无法创建 local backend client")
     })
+}
+
+/// 重型请求专用:/start 内部要等 mihomo 重启就绪、订阅下载、解析等,
+/// 单次 15s 预算不够。其他参数与 local_backend_client 一致。
+fn long_backend_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(2))
+            .pool_idle_timeout(std::time::Duration::from_secs(20))
+            .tcp_keepalive(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .expect("无法创建 long backend client")
+    })
+}
+
+/// 路径白名单:重型请求走 60s timeout,其余走 15s。
+fn pick_client(path: &str) -> &'static reqwest::Client {
+    if path.starts_with("/readsubscriptions")
+        || path.starts_with("/readfileconfig")
+        || path.starts_with("/start")
+    {
+        long_backend_client()
+    } else {
+        local_backend_client()
+    }
 }
 
 /// 通过 Rust 侧 reqwest 代理向后端发起请求,绕过 webview 的 mixed-content / CORS 限制
@@ -462,7 +591,7 @@ fn local_backend_client() -> &'static reqwest::Client {
 #[tauri::command]
 async fn api_get(path: String) -> Result<String, String> {
     let url = format!("{}{}", BACKEND_URL, path);
-    let res = local_backend_client()
+    let res = pick_client(&path)
         .get(&url)
         .send()
         .await
@@ -478,7 +607,7 @@ async fn api_get(path: String) -> Result<String, String> {
 #[tauri::command]
 async fn api_post_json(path: String, body: String) -> Result<String, String> {
     let url = format!("{}{}", BACKEND_URL, path);
-    let res = local_backend_client()
+    let res = pick_client(&path)
         .post(&url)
         .header("content-type", "application/json")
         .body(body)
@@ -503,7 +632,7 @@ async fn api_post_file(
     let url = format!("{}{}", BACKEND_URL, path);
     let part = reqwest::multipart::Part::bytes(file_bytes).file_name(file_name);
     let form = reqwest::multipart::Form::new().part("file", part);
-    let res = local_backend_client()
+    let res = pick_client(&path)
         .post(&url)
         .multipart(form)
         .send()
@@ -551,7 +680,12 @@ async fn import_config_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 fn restart_backend(app: AppHandle, state: State<BackendState>) -> Result<(), String> {
-    if let Some(mut c) = state.child.lock().unwrap().take() {
+    // 全程持锁:take 旧 child → spawn 新 child → 写回锁,中间不释放。
+    // 关键:supervisor loop 也走同一把锁,这里持锁 spawn 能保证 supervisor 看到的
+    // 永远是"完整状态"(要么旧 Some、要么新 Some),不会撞到中间的 None 误以为
+    // 后端崩了再触发一次重启。
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    if let Some(mut c) = guard.take() {
         kill_backend_tree(&mut c);
     }
     // 给 OS 一点时间清理端口/句柄
@@ -560,7 +694,7 @@ fn restart_backend(app: AppHandle, state: State<BackendState>) -> Result<(), Str
     // 这里会触发重新同步,从而让"设置 → 重启后端"成为通用自愈入口。
     ensure_runtime_engine(&app)?;
     let new_child = spawn_backend(&app)?;
-    *state.child.lock().unwrap() = Some(new_child);
+    *guard = Some(new_child);
     Ok(())
 }
 
@@ -1177,6 +1311,8 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("[backend] 启动失败: {e}"),
             }
+            // 启动 supervisor:崩了自动重启,UI 不会一直停在"后端未连接"
+            tauri::async_runtime::spawn(supervisor_loop(handle.clone()));
             // 兜底:即使前端因 webkit/JS 异常没能调 show_main_window,
             // 5 秒后主进程也强制让主窗口可见,避免"双击没反应"的体感。
             let h_show = handle.clone();
@@ -1213,6 +1349,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|handle, event| {
             if let RunEvent::Exit = event {
+                // 关键:必须先置位让 supervisor 退出循环,否则它可能在主进程
+                // kill 子进程的瞬间检测到"已退出"再次拉起 mihomo,留下孤儿。
+                SHUTTING_DOWN.store(true, Ordering::SeqCst);
                 let state = handle.state::<BackendState>();
                 if let Some(mut c) = state.child.lock().unwrap().take() {
                     kill_backend_tree(&mut c);

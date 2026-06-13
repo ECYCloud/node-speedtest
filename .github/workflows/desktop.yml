@@ -457,10 +457,19 @@ jobs:
           [ -n "$DMG" ] || { echo "DMG not produced"; exit 1; }
           [ -n "$TARGZ" ] || { echo ".app.tar.gz not produced"; exit 1; }
           [ -n "$SIG" ] || { echo ".app.tar.gz.sig not produced (signing key missing?)"; exit 1; }
+          # Tauri 默认 .app.tar.gz 文件名不带版本/架构,两个 macOS job 同名会互相覆盖。
+          # 改名带 _0.1.x_aarch64 后缀,与 windows/linux 资产命名风格一致,同时让
+          # publish_updater_manifest 能用确定的文件名读到对应签名。
+          VERSION=$(jq -r .version separated/desktop/src-tauri/tauri.conf.json)
+          NEW_TARGZ_DIR=$(dirname "$TARGZ")
+          NEW_TARGZ="$NEW_TARGZ_DIR/Stair Speedtest_${VERSION}_aarch64.app.tar.gz"
+          NEW_SIG="${NEW_TARGZ}.sig"
+          mv "$TARGZ" "$NEW_TARGZ"
+          mv "$SIG" "$NEW_SIG"
           {
             echo "dmg=$DMG"
-            echo "targz=$TARGZ"
-            echo "sig=$SIG"
+            echo "targz=$NEW_TARGZ"
+            echo "sig=$NEW_SIG"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
@@ -600,10 +609,19 @@ jobs:
           [ -n "$DMG" ] || { echo "DMG not produced"; exit 1; }
           [ -n "$TARGZ" ] || { echo ".app.tar.gz not produced"; exit 1; }
           [ -n "$SIG" ] || { echo ".app.tar.gz.sig not produced (signing key missing?)"; exit 1; }
+          # Tauri 默认 .app.tar.gz 文件名不带版本/架构,与另一个 macOS arm64 job 同名会互相覆盖。
+          # 改名带 _0.1.x_x64 后缀,与 windows/linux 资产命名风格一致,同时让
+          # publish_updater_manifest 能用确定的文件名读到对应签名。
+          VERSION=$(jq -r .version separated/desktop/src-tauri/tauri.conf.json)
+          NEW_TARGZ_DIR=$(dirname "$TARGZ")
+          NEW_TARGZ="$NEW_TARGZ_DIR/Stair Speedtest_${VERSION}_x64.app.tar.gz"
+          NEW_SIG="${NEW_TARGZ}.sig"
+          mv "$TARGZ" "$NEW_TARGZ"
+          mv "$SIG" "$NEW_SIG"
           {
             echo "dmg=$DMG"
-            echo "targz=$TARGZ"
-            echo "sig=$SIG"
+            echo "targz=$NEW_TARGZ"
+            echo "sig=$NEW_SIG"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
@@ -1000,22 +1018,23 @@ jobs:
           VERSION="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          # 下载本次 release 的所有 .sig 资产到当前目录
+          # 下载本次 release 的所有 .sig 资产到当前目录。
+          # GitHub release 把上传时文件名里的空格在 web 显示和 download 时统一替换为 ".",
+          # 所以 gh download 拉到本地的 .sig 文件名是 "Stair.Speedtest_x.y.z_*.sig"。
           gh release download "$TAG" --repo "$REPO" --pattern '*.sig' --dir .
 
           base="https://github.com/$REPO/releases/download/$TAG"
 
-          # 平台键(Tauri updater 约定)→ 资产文件名 + .sig 文件名
-          # 资产名遵循 Tauri 2 默认命名规则,version 是去掉 v 的 tag,如 0.1.2
-          win_x64_exe="Stair Speedtest_${VERSION}_x64-setup.exe"
-          win_a64_exe="Stair Speedtest_${VERSION}_arm64-setup.exe"
-          mac_x64_tgz="Stair Speedtest_${VERSION}_x64.app.tar.gz"
-          mac_a64_tgz="Stair Speedtest_${VERSION}_aarch64.app.tar.gz"
-          lin_x64_app="Stair Speedtest_${VERSION}_amd64.AppImage"
-          lin_a64_app="Stair Speedtest_${VERSION}_aarch64.AppImage"
+          # 平台键(Tauri updater 约定)→ 资产 basename(以 GitHub 实际存储/下载的形态:点替代空格)
+          # 各 desktop job 已把 macOS .app.tar.gz 显式改名带架构后缀,避免 arm64/x64 同名互相覆盖
+          win_x64_exe="Stair.Speedtest_${VERSION}_x64-setup.exe"
+          win_a64_exe="Stair.Speedtest_${VERSION}_arm64-setup.exe"
+          mac_x64_tgz="Stair.Speedtest_${VERSION}_x64.app.tar.gz"
+          mac_a64_tgz="Stair.Speedtest_${VERSION}_aarch64.app.tar.gz"
+          lin_x64_app="Stair.Speedtest_${VERSION}_amd64.AppImage"
+          lin_a64_app="Stair.Speedtest_${VERSION}_aarch64.AppImage"
 
           read_sig() {
-            # gh download 把 URL 编码后的空格保留为 + 或 %20,实际下载到磁盘的文件名仍是空格
             local f="$1"
             if [ ! -f "$f" ]; then
               echo "::error::missing signature file: $f" >&2
@@ -1024,26 +1043,21 @@ jobs:
             cat "$f"
           }
 
-          # GitHub asset URL 中的空格用 . 替换(GitHub 自动转义),所以 setup.exe URL 是
-          # Stair.Speedtest_0.1.2_x64-setup.exe;但 gh release upload 上传的实际文件名是
-          # 带空格的,access 时 GitHub 自己做映射。下载/直链都按 . 形式来。
-          urlenc() { echo "$1" | sed 's/ /./g'; }
-
           jq -n \
             --arg version "$VERSION" \
             --arg pub_date "$PUB_DATE" \
             --arg notes "See release notes at https://github.com/$REPO/releases/tag/$TAG" \
-            --arg win_x64_url "$base/$(urlenc "$win_x64_exe")" \
+            --arg win_x64_url "$base/$win_x64_exe" \
             --arg win_x64_sig "$(read_sig "${win_x64_exe}.sig")" \
-            --arg win_a64_url "$base/$(urlenc "$win_a64_exe")" \
+            --arg win_a64_url "$base/$win_a64_exe" \
             --arg win_a64_sig "$(read_sig "${win_a64_exe}.sig")" \
-            --arg mac_x64_url "$base/$(urlenc "$mac_x64_tgz")" \
+            --arg mac_x64_url "$base/$mac_x64_tgz" \
             --arg mac_x64_sig "$(read_sig "${mac_x64_tgz}.sig")" \
-            --arg mac_a64_url "$base/$(urlenc "$mac_a64_tgz")" \
+            --arg mac_a64_url "$base/$mac_a64_tgz" \
             --arg mac_a64_sig "$(read_sig "${mac_a64_tgz}.sig")" \
-            --arg lin_x64_url "$base/$(urlenc "$lin_x64_app")" \
+            --arg lin_x64_url "$base/$lin_x64_app" \
             --arg lin_x64_sig "$(read_sig "${lin_x64_app}.sig")" \
-            --arg lin_a64_url "$base/$(urlenc "$lin_a64_app")" \
+            --arg lin_a64_url "$base/$lin_a64_app" \
             --arg lin_a64_sig "$(read_sig "${lin_a64_app}.sig")" \
             '{
               version: $version,

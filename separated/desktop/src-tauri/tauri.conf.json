@@ -30,7 +30,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "deb", "rpm", "appimage", "dmg"],
+    "targets": ["nsis", "deb", "rpm", "appimage", "dmg", "app"],
+    "createUpdaterArtifacts": true,
     "copyright": "MIT",
     "license": "MIT",
     "licenseFile": "LICENSE",
@@ -54,6 +55,18 @@
         "installerHooks": "installer-hooks.nsh",
         "installerIcon": "icons/icon.ico",
         "headerImage": "icons/header.bmp"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxQTI2MjlGNTYwOTlCREMKUldUY213bFduMktpNFVVTnhHTDgwRjJTWnRUVEdBT1BON3dOUXdEWXFlN0hES214bFM1NHNadTMK",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

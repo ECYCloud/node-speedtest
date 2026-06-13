@@ -2,6 +2,9 @@ import { Button, Card, SectionTitle } from "../components/ui";
 import { RefreshCw, Monitor, Download, ExternalLink, CheckCircle2, AlertCircle, PackageCheck, Sparkles, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { check as checkAppUpdater, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 import { useState } from "react";
 
 // /checkupdate 接口返回结构(由 webgui_wrapper.cpp 序列化):
@@ -25,9 +28,6 @@ type UpdateResult = {
   error: string;
 };
 
-// check_app_update Tauri 命令的返回结构,语义与 UpdateInfo 对齐
-type AppUpdateInfo = UpdateInfo;
-
 // clear_app_data Tauri 命令的返回结构:cleared 是已删除的路径列表,
 // errors 是 best-effort 删除时被占用而跳过的项(用户可见用于排查残留)
 type ClearAppDataResult = {
@@ -35,14 +35,41 @@ type ClearAppDataResult = {
   errors: string[];
 };
 
+// 应用自身更新状态机 — 由 tauri-plugin-updater 驱动:
+//   idle            未检查
+//   checking        正在请求 latest.json
+//   none            已是最新
+//   available       发现新版,等用户确认下载安装
+//   downloading     下载中(received/total 字节,total 可能为 0 表示未知)
+//   installing      下载完成,正在调用平台安装器(NSIS passive / .app 替换 / AppImage 覆盖)
+//   ready           安装完成,即将 relaunch
+//   error           任意阶段失败,带可读错误
+type AppUpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "none"; current: string }
+  | { kind: "available"; current: string; latest: string; notes: string; update: Update }
+  | { kind: "downloading"; current: string; latest: string; received: number; total: number }
+  | { kind: "installing"; latest: string }
+  | { kind: "ready"; latest: string }
+  | { kind: "error"; message: string };
+
+const APP_RELEASE_URL = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest";
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 export default function SettingsPage() {
   const [restarting, setRestarting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installResult, setInstallResult] = useState<UpdateResult | null>(null);
-  const [appChecking, setAppChecking] = useState(false);
-  const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ kind: "idle" });
   // 二次确认对话框开关:第一次点"清理应用数据"只展开警告,第二次点确认才真正执行
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -57,22 +84,63 @@ export default function SettingsPage() {
     }
   }
 
-  async function checkAppUpdate() {
-    setAppChecking(true);
+  // 检查应用自身更新:走 tauri-plugin-updater,读 GitHub release 里的 latest.json,
+  // 内部用 minisign 公钥验签;只查不下载,用户确认后再调 installAppUpdate
+  async function checkUpdateApp() {
+    setAppUpdate({ kind: "checking" });
     try {
-      // 走系统代理调 GitHub API,与 mihomo 更新检查同源,失败时也返回结构化错误
-      const info = await invoke<AppUpdateInfo>("check_app_update");
-      setAppUpdateInfo(info);
-    } catch (e) {
-      setAppUpdateInfo({
-        local: "",
-        latest: "",
-        has_update: false,
-        release_url: "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest",
-        error: String(e),
+      const update = await checkAppUpdater();
+      if (!update) {
+        // plugin 把当前版本读自 tauri.conf.json,checkAppUpdater 拿不到 update 时只表示"已是最新"
+        const current = await getVersion();
+        setAppUpdate({ kind: "none", current });
+        return;
+      }
+      setAppUpdate({
+        kind: "available",
+        current: update.currentVersion,
+        latest: update.version,
+        notes: update.body ?? "",
+        update,
       });
-    } finally {
-      setAppChecking(false);
+    } catch (e) {
+      setAppUpdate({ kind: "error", message: String(e) });
+    }
+  }
+
+  // 下载并安装:downloadAndInstall 在三平台行为不同
+  //   Windows: 下载 .nsis.zip → 解压 setup.exe → 启动 NSIS(passive 模式带进度)
+  //   macOS:   下载 .app.tar.gz → 解压替换当前 .app → 提示 relaunch
+  //   Linux:   下载 .AppImage → 替换当前 AppImage 文件 → 提示 relaunch
+  // 完成后调 relaunch() 让 Tauri 关掉当前进程并重启新版本
+  async function installUpdateApp() {
+    if (appUpdate.kind !== "available") return;
+    const u = appUpdate.update;
+    const latest = appUpdate.latest;
+    let received = 0;
+    let total = 0;
+    setAppUpdate({ kind: "downloading", current: appUpdate.current, latest, received: 0, total: 0 });
+    try {
+      await u.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            total = event.data.contentLength ?? 0;
+            setAppUpdate({ kind: "downloading", current: appUpdate.current, latest, received: 0, total });
+            break;
+          case "Progress":
+            received += event.data.chunkLength;
+            setAppUpdate({ kind: "downloading", current: appUpdate.current, latest, received, total });
+            break;
+          case "Finished":
+            setAppUpdate({ kind: "installing", latest });
+            break;
+        }
+      });
+      setAppUpdate({ kind: "ready", latest });
+      // Windows passive NSIS 会自己接管,以下 relaunch 主要服务 macOS/Linux
+      await relaunch();
+    } catch (e) {
+      setAppUpdate({ kind: "error", message: String(e) });
     }
   }
 
@@ -163,50 +231,109 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="p-5">
-        <SectionTitle desc="检查 Stair Speedtest 是否有新版可下载（来源：GitHub ECYCloud/stairspeedtest-reborn-mihomo）">
+        <SectionTitle desc="检查 Stair Speedtest 是否有新版（来源：GitHub ECYCloud/stairspeedtest-reborn-mihomo）">
           软件更新
         </SectionTitle>
         <div className="flex items-center gap-3 flex-wrap">
-          <Button onClick={checkAppUpdate} disabled={appChecking}>
-            <Sparkles size={14} className={appChecking ? "animate-pulse" : ""} />
-            {appChecking ? "检查中…" : "检查更新"}
+          <Button onClick={checkUpdateApp} disabled={appUpdate.kind === "checking" || appUpdate.kind === "downloading" || appUpdate.kind === "installing"}>
+            <Sparkles size={14} className={appUpdate.kind === "checking" ? "animate-pulse" : ""} />
+            {appUpdate.kind === "checking" ? "检查中…" : "检查更新"}
           </Button>
-          {appUpdateInfo && !appUpdateInfo.error && (
+          {(appUpdate.kind === "none" || appUpdate.kind === "available" || appUpdate.kind === "downloading") && (
             <span className="text-sm text-fg-muted">
-              本地 <code className="text-xs">v{appUpdateInfo.local || "未知"}</code>
-              <span className="mx-2">·</span>
-              最新 <code className="text-xs">{appUpdateInfo.latest || "未知"}</code>
+              本地 <code className="text-xs">v{
+                appUpdate.kind === "none" ? appUpdate.current :
+                appUpdate.kind === "available" ? appUpdate.current :
+                appUpdate.current
+              }</code>
+              {(appUpdate.kind === "available" || appUpdate.kind === "downloading") && (
+                <>
+                  <span className="mx-2">·</span>
+                  最新 <code className="text-xs">v{appUpdate.latest}</code>
+                </>
+              )}
             </span>
           )}
         </div>
-        {appUpdateInfo && (
+        {appUpdate.kind !== "idle" && appUpdate.kind !== "checking" && (
           <div className="mt-3 text-sm">
-            {appUpdateInfo.error ? (
-              <div className="flex items-center gap-2 text-red-500">
-                <AlertCircle size={14} />
-                <span>{appUpdateInfo.error}</span>
-              </div>
-            ) : appUpdateInfo.has_update ? (
+            {appUpdate.kind === "error" ? (
               <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-amber-500">
-                  <AlertCircle size={14} />
-                  <span>发现新版本 {appUpdateInfo.latest}，可前往 GitHub 下载安装包</span>
+                <div className="flex items-start gap-2 text-red-500">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  <span className="break-all">{appUpdate.message}</span>
                 </div>
                 <div>
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
-                    onClick={() => openUrl(appUpdateInfo.release_url)}
+                    onClick={() => openUrl(APP_RELEASE_URL)}
                   >
                     <ExternalLink size={14} />
-                    前往下载页
+                    前往下载页(手动)
                   </button>
                 </div>
               </div>
-            ) : appUpdateInfo.latest ? (
+            ) : appUpdate.kind === "none" ? (
               <div className="flex items-center gap-2 text-green-600">
                 <CheckCircle2 size={14} />
                 <span>已是最新版本</span>
+              </div>
+            ) : appUpdate.kind === "available" ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-amber-500">
+                  <AlertCircle size={14} />
+                  <span>发现新版本 v{appUpdate.latest}，可一键下载并自动安装</span>
+                </div>
+                {appUpdate.notes && (
+                  <pre className="whitespace-pre-wrap break-words text-xs text-fg-muted bg-bg-subtle rounded p-2 max-h-32 overflow-auto font-sans">
+                    {appUpdate.notes}
+                  </pre>
+                )}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Button onClick={installUpdateApp}>
+                    <PackageCheck size={14} />
+                    下载并安装
+                  </Button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
+                    onClick={() => openUrl(APP_RELEASE_URL)}
+                  >
+                    <ExternalLink size={14} />
+                    手动下载
+                  </button>
+                </div>
+              </div>
+            ) : appUpdate.kind === "downloading" ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-amber-500">
+                  <Download size={14} className="animate-pulse" />
+                  <span>
+                    下载中 v{appUpdate.latest} —{" "}
+                    {appUpdate.total > 0
+                      ? `${formatBytes(appUpdate.received)} / ${formatBytes(appUpdate.total)} (${Math.round((appUpdate.received / appUpdate.total) * 100)}%)`
+                      : `已下载 ${formatBytes(appUpdate.received)}`}
+                  </span>
+                </div>
+                {appUpdate.total > 0 && (
+                  <div className="h-1.5 w-full bg-bg-subtle rounded overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 transition-all"
+                      style={{ width: `${Math.min(100, (appUpdate.received / appUpdate.total) * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : appUpdate.kind === "installing" ? (
+              <div className="flex items-center gap-2 text-amber-500">
+                <PackageCheck size={14} className="animate-pulse" />
+                <span>正在安装 v{appUpdate.latest}…</span>
+              </div>
+            ) : appUpdate.kind === "ready" ? (
+              <div className="flex items-center gap-2 text-green-600">
+                <CheckCircle2 size={14} />
+                <span>已安装 v{appUpdate.latest}，应用即将重启</span>
               </div>
             ) : null}
           </div>

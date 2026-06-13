@@ -1238,121 +1238,9 @@ struct UpdateResult {
     error: String,
 }
 
-/// 应用自身更新检查结果。前端按 has_update 决定是否提示用户跳到 release_url 手动下载。
-/// 不做自动替换:主程序 exe 与 NSIS 安装包结构强绑定,简单覆盖二进制无法保证升级一致性。
-#[derive(Serialize)]
-struct AppUpdateInfo {
-    local: String,
-    latest: String,
-    has_update: bool,
-    release_url: String,
-    error: String,
-}
-
-/// 与 C++ 后端 compareKernelVersion 等价:剥离 v/V 前缀后按 "." 分段做整数比较,
-/// 缺位补 0。"v1.9" < "v1.19" 走的是数值比较,不是字典序。
-fn compare_semver(a: &str, b: &str) -> std::cmp::Ordering {
-    fn strip(v: &str) -> &str {
-        v.strip_prefix(['v', 'V']).unwrap_or(v)
-    }
-    let sa: Vec<i64> = strip(a).split('.').map(|s| s.parse().unwrap_or(0)).collect();
-    let sb: Vec<i64> = strip(b).split('.').map(|s| s.parse().unwrap_or(0)).collect();
-    let n = sa.len().max(sb.len());
-    for i in 0..n {
-        let x = sa.get(i).copied().unwrap_or(0);
-        let y = sb.get(i).copied().unwrap_or(0);
-        if x != y {
-            return x.cmp(&y);
-        }
-    }
-    std::cmp::Ordering::Equal
-}
-
-/// 查询 stair-speedtest 自身的最新发行版(GitHub: ECYCloud/stairspeedtest-reborn-mihomo)。
-/// 与 mihomo 检查接口对称:走系统代理(国内直连 api.github.com 多被限速),
-/// tag_name 对比本地 CARGO_PKG_VERSION 决定是否提示用户去 release 页下载。
-#[tauri::command]
-async fn check_app_update() -> Result<AppUpdateInfo, String> {
-    const RELEASE_PAGE: &str = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest";
-    let local = env!("CARGO_PKG_VERSION").to_string();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent("stairspeedtest-reborn-desktop")
-        .build()
-        .map_err(|e| format!("创建检查 client 失败: {e}"))?;
-
-    let resp = match client
-        .get("https://api.github.com/repos/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest")
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok(AppUpdateInfo {
-                local,
-                latest: String::new(),
-                has_update: false,
-                release_url: RELEASE_PAGE.into(),
-                error: format!("访问 GitHub 失败: {e}"),
-            });
-        }
-    };
-
-    if !resp.status().is_success() {
-        return Ok(AppUpdateInfo {
-            local,
-            latest: String::new(),
-            has_update: false,
-            release_url: RELEASE_PAGE.into(),
-            error: format!("GitHub API 返回 {}", resp.status()),
-        });
-    }
-
-    let release: serde_json::Value = match resp.json().await {
-        Ok(v) => v,
-        Err(e) => {
-            return Ok(AppUpdateInfo {
-                local,
-                latest: String::new(),
-                has_update: false,
-                release_url: RELEASE_PAGE.into(),
-                error: format!("解析 release JSON 失败: {e}"),
-            });
-        }
-    };
-
-    let latest = release
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let html_url = release
-        .get("html_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or(RELEASE_PAGE)
-        .to_string();
-
-    if latest.is_empty() {
-        return Ok(AppUpdateInfo {
-            local,
-            latest,
-            has_update: false,
-            release_url: html_url,
-            error: "release 缺少 tag_name 字段".into(),
-        });
-    }
-
-    let has_update = compare_semver(&latest, &local) == std::cmp::Ordering::Greater;
-    Ok(AppUpdateInfo {
-        local,
-        latest,
-        has_update,
-        release_url: html_url,
-        error: String::new(),
-    })
-}
+// 应用自身更新现在由 tauri-plugin-updater 处理:
+// 客户端读 GitHub release 里的 latest.json,minisign 公钥验签,
+// 三平台自动 download + install + relaunch。无需后端命令对应。
 
 #[tauri::command]
 async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> {
@@ -1563,6 +1451,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(BackendState {
             child: Mutex::new(None),
         })
@@ -1625,7 +1515,6 @@ pub fn run() {
             clear_history,
             export_history,
             get_my_ip_info,
-            check_app_update,
             download_mihomo_update
         ])
         .build(tauri::generate_context!())

@@ -143,6 +143,9 @@ jobs:
 
       - name: Tauri build (NSIS)
         working-directory: separated/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build
 
       # ---------- 4. 上传产物 ----------
@@ -150,24 +153,31 @@ jobs:
         id: locate
         shell: pwsh
         run: |
-          $exe = Get-ChildItem separated/desktop/src-tauri/target/release/bundle/nsis/*.exe |
-                 Select-Object -First 1
+          $bundleDir = "separated/desktop/src-tauri/target/release/bundle/nsis"
+          $exe = Get-ChildItem "$bundleDir/*.exe" | Select-Object -First 1
+          $sig = Get-ChildItem "$bundleDir/*.exe.sig" | Select-Object -First 1
           if (-not $exe) { throw "NSIS installer not produced" }
+          if (-not $sig) { throw "NSIS installer signature not produced (TAURI_SIGNING_PRIVATE_KEY missing?)" }
           "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "sig=$($sig.FullName)"  >> $env:GITHUB_OUTPUT
           "name=$($exe.Name)"     >> $env:GITHUB_OUTPUT
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: stair-speedtest-windows-desktop
-          path: ${{ steps.locate.outputs.path }}
+          path: |
+            ${{ steps.locate.outputs.path }}
+            ${{ steps.locate.outputs.sig }}
           if-no-files-found: error
 
       - name: Attach to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.locate.outputs.path }}
+          files: |
+            ${{ steps.locate.outputs.path }}
+            ${{ steps.locate.outputs.sig }}
           draft: false
 
   # ============================================================
@@ -290,30 +300,40 @@ jobs:
 
       - name: Tauri build (NSIS, arm64)
         working-directory: separated/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --target aarch64-pc-windows-msvc
 
       - name: Locate NSIS installer
         id: locate
         shell: pwsh
         run: |
-          $exe = Get-ChildItem separated/desktop/src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe |
-                 Select-Object -First 1
+          $bundleDir = "separated/desktop/src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis"
+          $exe = Get-ChildItem "$bundleDir/*.exe" | Select-Object -First 1
+          $sig = Get-ChildItem "$bundleDir/*.exe.sig" | Select-Object -First 1
           if (-not $exe) { throw "NSIS installer not produced" }
+          if (-not $sig) { throw "NSIS installer signature not produced (TAURI_SIGNING_PRIVATE_KEY missing?)" }
           "path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "sig=$($sig.FullName)"  >> $env:GITHUB_OUTPUT
           "name=$($exe.Name)"     >> $env:GITHUB_OUTPUT
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: stair-speedtest-windows-arm64-desktop
-          path: ${{ steps.locate.outputs.path }}
+          path: |
+            ${{ steps.locate.outputs.path }}
+            ${{ steps.locate.outputs.sig }}
           if-no-files-found: error
 
       - name: Attach to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.locate.outputs.path }}
+          files: |
+            ${{ steps.locate.outputs.path }}
+            ${{ steps.locate.outputs.sig }}
           draft: false
 
   # ============================================================
@@ -416,30 +436,51 @@ jobs:
         working-directory: separated/desktop
         run: npm ci
 
-      - name: Tauri build (DMG)
+      - name: Tauri build (DMG + .app updater bundle)
         working-directory: separated/desktop
-        # 用 --bundles dmg 覆盖 tauri.conf.json 里的 nsis(macOS 下 NSIS 不存在)
-        run: npm run tauri -- build --bundles dmg
+        # 用 --bundles app dmg 覆盖 tauri.conf.json 里的 nsis(macOS 下 NSIS 不存在)
+        # app:tauri-plugin-updater 需要的 .app.tar.gz tarball 自动产物
+        # dmg:用户首次手动下载安装用
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --bundles app dmg
 
-      - name: Locate DMG
+      - name: Locate macOS bundles
         id: locate
         run: |
-          DMG=$(find separated/desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -n 1)
+          set -e
+          BUNDLE=separated/desktop/src-tauri/target/release/bundle
+          DMG=$(find "$BUNDLE/dmg" -name '*.dmg' | head -n 1)
+          TARGZ=$(find "$BUNDLE/macos" -name '*.app.tar.gz' | head -n 1)
+          SIG=$(find "$BUNDLE/macos" -name '*.app.tar.gz.sig' | head -n 1)
           [ -n "$DMG" ] || { echo "DMG not produced"; exit 1; }
-          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          [ -n "$TARGZ" ] || { echo ".app.tar.gz not produced"; exit 1; }
+          [ -n "$SIG" ] || { echo ".app.tar.gz.sig not produced (signing key missing?)"; exit 1; }
+          {
+            echo "dmg=$DMG"
+            echo "targz=$TARGZ"
+            echo "sig=$SIG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: stair-speedtest-macos-desktop
-          path: ${{ steps.locate.outputs.path }}
+          path: |
+            ${{ steps.locate.outputs.dmg }}
+            ${{ steps.locate.outputs.targz }}
+            ${{ steps.locate.outputs.sig }}
           if-no-files-found: error
 
       - name: Attach to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.locate.outputs.path }}
+          files: |
+            ${{ steps.locate.outputs.dmg }}
+            ${{ steps.locate.outputs.targz }}
+            ${{ steps.locate.outputs.sig }}
           draft: false
 
   # ============================================================
@@ -541,29 +582,48 @@ jobs:
         working-directory: separated/desktop
         run: npm ci
 
-      - name: Tauri build (DMG, x86_64)
+      - name: Tauri build (DMG + .app updater bundle, x86_64)
         working-directory: separated/desktop
-        run: npm run tauri -- build --bundles dmg --target x86_64-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --bundles app dmg --target x86_64-apple-darwin
 
-      - name: Locate DMG
+      - name: Locate macOS bundles
         id: locate
         run: |
-          DMG=$(find separated/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -name '*.dmg' | head -n 1)
+          set -e
+          BUNDLE=separated/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle
+          DMG=$(find "$BUNDLE/dmg" -name '*.dmg' | head -n 1)
+          TARGZ=$(find "$BUNDLE/macos" -name '*.app.tar.gz' | head -n 1)
+          SIG=$(find "$BUNDLE/macos" -name '*.app.tar.gz.sig' | head -n 1)
           [ -n "$DMG" ] || { echo "DMG not produced"; exit 1; }
-          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          [ -n "$TARGZ" ] || { echo ".app.tar.gz not produced"; exit 1; }
+          [ -n "$SIG" ] || { echo ".app.tar.gz.sig not produced (signing key missing?)"; exit 1; }
+          {
+            echo "dmg=$DMG"
+            echo "targz=$TARGZ"
+            echo "sig=$SIG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: stair-speedtest-macos-intel-desktop
-          path: ${{ steps.locate.outputs.path }}
+          path: |
+            ${{ steps.locate.outputs.dmg }}
+            ${{ steps.locate.outputs.targz }}
+            ${{ steps.locate.outputs.sig }}
           if-no-files-found: error
 
       - name: Attach to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.locate.outputs.path }}
+          files: |
+            ${{ steps.locate.outputs.dmg }}
+            ${{ steps.locate.outputs.targz }}
+            ${{ steps.locate.outputs.sig }}
           draft: false
 
   # ============================================================
@@ -686,6 +746,9 @@ jobs:
 
       - name: Tauri build (AppImage + deb + rpm)
         working-directory: separated/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --bundles appimage deb rpm
 
       - name: Locate Linux bundles
@@ -694,13 +757,16 @@ jobs:
           set -e
           BUNDLE=separated/desktop/src-tauri/target/release/bundle
           APPIMAGE=$(find "$BUNDLE/appimage" -name '*.AppImage' 2>/dev/null | head -n 1)
+          APPIMAGE_SIG=$(find "$BUNDLE/appimage" -name '*.AppImage.sig' 2>/dev/null | head -n 1)
           DEB=$(find "$BUNDLE/deb" -name '*.deb' 2>/dev/null | head -n 1)
           RPM=$(find "$BUNDLE/rpm" -name '*.rpm' 2>/dev/null | head -n 1)
           [ -n "$APPIMAGE" ] || { echo "AppImage not produced"; exit 1; }
+          [ -n "$APPIMAGE_SIG" ] || { echo "AppImage.sig not produced (signing key missing?)"; exit 1; }
           [ -n "$DEB" ] || { echo "deb not produced"; exit 1; }
           [ -n "$RPM" ] || { echo "rpm not produced"; exit 1; }
           {
             echo "appimage=$APPIMAGE"
+            echo "appimage_sig=$APPIMAGE_SIG"
             echo "deb=$DEB"
             echo "rpm=$RPM"
           } >> "$GITHUB_OUTPUT"
@@ -711,6 +777,7 @@ jobs:
           name: stair-speedtest-linux-desktop
           path: |
             ${{ steps.locate.outputs.appimage }}
+            ${{ steps.locate.outputs.appimage_sig }}
             ${{ steps.locate.outputs.deb }}
             ${{ steps.locate.outputs.rpm }}
           if-no-files-found: error
@@ -721,6 +788,7 @@ jobs:
         with:
           files: |
             ${{ steps.locate.outputs.appimage }}
+            ${{ steps.locate.outputs.appimage_sig }}
             ${{ steps.locate.outputs.deb }}
             ${{ steps.locate.outputs.rpm }}
           draft: false
@@ -848,6 +916,9 @@ jobs:
 
       - name: Tauri build (AppImage + deb + rpm, arm64)
         working-directory: separated/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --bundles appimage deb rpm
 
       - name: Locate Linux bundles
@@ -856,13 +927,16 @@ jobs:
           set -e
           BUNDLE=separated/desktop/src-tauri/target/release/bundle
           APPIMAGE=$(find "$BUNDLE/appimage" -name '*.AppImage' 2>/dev/null | head -n 1)
+          APPIMAGE_SIG=$(find "$BUNDLE/appimage" -name '*.AppImage.sig' 2>/dev/null | head -n 1)
           DEB=$(find "$BUNDLE/deb" -name '*.deb' 2>/dev/null | head -n 1)
           RPM=$(find "$BUNDLE/rpm" -name '*.rpm' 2>/dev/null | head -n 1)
           [ -n "$APPIMAGE" ] || { echo "AppImage not produced"; exit 1; }
+          [ -n "$APPIMAGE_SIG" ] || { echo "AppImage.sig not produced (signing key missing?)"; exit 1; }
           [ -n "$DEB" ] || { echo "deb not produced"; exit 1; }
           [ -n "$RPM" ] || { echo "rpm not produced"; exit 1; }
           {
             echo "appimage=$APPIMAGE"
+            echo "appimage_sig=$APPIMAGE_SIG"
             echo "deb=$DEB"
             echo "rpm=$RPM"
           } >> "$GITHUB_OUTPUT"
@@ -873,6 +947,7 @@ jobs:
           name: stair-speedtest-linux-arm64-desktop
           path: |
             ${{ steps.locate.outputs.appimage }}
+            ${{ steps.locate.outputs.appimage_sig }}
             ${{ steps.locate.outputs.deb }}
             ${{ steps.locate.outputs.rpm }}
           if-no-files-found: error
@@ -883,6 +958,114 @@ jobs:
         with:
           files: |
             ${{ steps.locate.outputs.appimage }}
+            ${{ steps.locate.outputs.appimage_sig }}
             ${{ steps.locate.outputs.deb }}
             ${{ steps.locate.outputs.rpm }}
           draft: false
+
+
+  # ============================================================
+  # publish_updater_manifest
+  # 等所有 6 个 desktop job 完成,从 release 读出所有 .sig,
+  # 拼出 tauri-plugin-updater 用的 latest.json 上传到同一 release。
+  # 客户端 endpoint = .../releases/latest/download/latest.json
+  # ============================================================
+  publish_updater_manifest:
+    name: Publish updater manifest (latest.json)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - windows_desktop
+      - windows_arm64_desktop
+      - macos_desktop
+      - macos_intel_desktop
+      - linux_desktop
+      - linux_arm64_desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p _updater
+          cd _updater
+
+          # release tag 形如 v0.1.2,latest.json 里 version 不带 v 前缀
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # 下载本次 release 的所有 .sig 资产到当前目录
+          gh release download "$TAG" --repo "$REPO" --pattern '*.sig' --dir .
+
+          base="https://github.com/$REPO/releases/download/$TAG"
+
+          # 平台键(Tauri updater 约定)→ 资产文件名 + .sig 文件名
+          # 资产名遵循 Tauri 2 默认命名规则,version 是去掉 v 的 tag,如 0.1.2
+          win_x64_exe="Stair Speedtest_${VERSION}_x64-setup.exe"
+          win_a64_exe="Stair Speedtest_${VERSION}_arm64-setup.exe"
+          mac_x64_tgz="Stair Speedtest_${VERSION}_x64.app.tar.gz"
+          mac_a64_tgz="Stair Speedtest_${VERSION}_aarch64.app.tar.gz"
+          lin_x64_app="Stair Speedtest_${VERSION}_amd64.AppImage"
+          lin_a64_app="Stair Speedtest_${VERSION}_aarch64.AppImage"
+
+          read_sig() {
+            # gh download 把 URL 编码后的空格保留为 + 或 %20,实际下载到磁盘的文件名仍是空格
+            local f="$1"
+            if [ ! -f "$f" ]; then
+              echo "::error::missing signature file: $f" >&2
+              exit 1
+            fi
+            cat "$f"
+          }
+
+          # GitHub asset URL 中的空格用 . 替换(GitHub 自动转义),所以 setup.exe URL 是
+          # Stair.Speedtest_0.1.2_x64-setup.exe;但 gh release upload 上传的实际文件名是
+          # 带空格的,access 时 GitHub 自己做映射。下载/直链都按 . 形式来。
+          urlenc() { echo "$1" | sed 's/ /./g'; }
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$PUB_DATE" \
+            --arg notes "See release notes at https://github.com/$REPO/releases/tag/$TAG" \
+            --arg win_x64_url "$base/$(urlenc "$win_x64_exe")" \
+            --arg win_x64_sig "$(read_sig "${win_x64_exe}.sig")" \
+            --arg win_a64_url "$base/$(urlenc "$win_a64_exe")" \
+            --arg win_a64_sig "$(read_sig "${win_a64_exe}.sig")" \
+            --arg mac_x64_url "$base/$(urlenc "$mac_x64_tgz")" \
+            --arg mac_x64_sig "$(read_sig "${mac_x64_tgz}.sig")" \
+            --arg mac_a64_url "$base/$(urlenc "$mac_a64_tgz")" \
+            --arg mac_a64_sig "$(read_sig "${mac_a64_tgz}.sig")" \
+            --arg lin_x64_url "$base/$(urlenc "$lin_x64_app")" \
+            --arg lin_x64_sig "$(read_sig "${lin_x64_app}.sig")" \
+            --arg lin_a64_url "$base/$(urlenc "$lin_a64_app")" \
+            --arg lin_a64_sig "$(read_sig "${lin_a64_app}.sig")" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64":  { signature: $win_x64_sig, url: $win_x64_url },
+                "windows-aarch64": { signature: $win_a64_sig, url: $win_a64_url },
+                "darwin-x86_64":   { signature: $mac_x64_sig, url: $mac_x64_url },
+                "darwin-aarch64":  { signature: $mac_a64_sig, url: $mac_a64_url },
+                "linux-x86_64":    { signature: $lin_x64_sig, url: $lin_x64_url },
+                "linux-aarch64":   { signature: $lin_a64_sig, url: $lin_a64_url }
+              }
+            }' > latest.json
+
+          echo '--- latest.json ---'
+          cat latest.json
+
+      - name: Upload latest.json to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release upload "$TAG" _updater/latest.json --repo "$REPO" --clobber

@@ -86,7 +86,10 @@ export default function AboutDialog({ open, onClose }: AboutDialogProps) {
               >
                 tindy2013/stairspeedtest-reborn
               </button>
-              {" "}二次开发，采用 MIT 许可证，原作者保留版权。
+              {" "}二次开发，采用 MIT 许可证。
+            </p>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-fg-muted">
+              Copyright © 2019 tindy2013、© 2026 ECYCloud。
             </p>
             <p className="mt-1.5 text-[13px] leading-relaxed text-fg">
               内置{" "}

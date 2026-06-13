@@ -4,27 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState } from "react";
 import { useAppUpdate } from "../store/appUpdate";
+import { useMihomoUpdate } from "../store/mihomoUpdate";
 
-// /checkupdate 接口返回结构(由 webgui_wrapper.cpp 序列化):
-//   - local       本地内核版本(mihomo -v 读出)
-//   - latest      GitHub /releases/latest 的 tag_name,失败时为空
-//   - has_update  latest > local 时为 true
-//   - release_url 始终是 GitHub releases 页地址
-//   - error       检查失败时的中文说明,成功时为空
-type UpdateInfo = {
-  local: string;
-  latest: string;
-  has_update: boolean;
-  release_url: string;
-  error: string;
-};
-
-// download_mihomo_update Tauri 命令的返回结构
-type UpdateResult = {
-  success: boolean;
-  new_version: string;
-  error: string;
-};
+// 类型定义已搬到 src/store/mihomoUpdate.ts(MihomoUpdateInfo / MihomoInstallResult)。
 
 // clear_app_data Tauri 命令的返回结构:cleared 是已删除的路径列表,
 // errors 是 best-effort 删除时被占用而跳过的项(用户可见用于排查残留)
@@ -33,8 +15,8 @@ type ClearAppDataResult = {
   errors: string[];
 };
 
-// 应用自身更新状态机移到 src/store/appUpdate.ts:
-// 用户离开设置页(组件 unmount)时,之前局部 useState 会被销毁导致进度丢失。
+// 应用自更新与 mihomo 内核更新的状态机均搬到 src/store/{appUpdate,mihomoUpdate}.ts:
+// 用户离开设置页(组件 unmount)时,局部 useState 会销毁导致进度/检查中态丢失。
 // 现在状态由 zustand 持有,跨页面切换无缝继续。
 
 const APP_RELEASE_URL = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest";
@@ -48,14 +30,17 @@ function formatBytes(n: number): string {
 
 export default function SettingsPage() {
   const [restarting, setRestarting] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [installing, setInstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<UpdateResult | null>(null);
   // 应用自更新状态由全局 zustand store 持有,避免离开设置页时下载进度丢失
   const appUpdate = useAppUpdate((s) => s.state);
   const checkUpdateApp = useAppUpdate((s) => s.check);
   const installUpdateApp = useAppUpdate((s) => s.install);
+  // mihomo 内核更新同样接全局 store(逻辑跟应用自更新对齐:跨页面切换无缝继续)
+  const checking = useMihomoUpdate((s) => s.checking);
+  const installing = useMihomoUpdate((s) => s.installing);
+  const updateInfo = useMihomoUpdate((s) => s.info);
+  const installResult = useMihomoUpdate((s) => s.installResult);
+  const checkUpdate = useMihomoUpdate((s) => s.check);
+  const installUpdate = useMihomoUpdate((s) => s.install);
   // 二次确认对话框开关:第一次点"清理应用数据"只展开警告,第二次点确认才真正执行
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -67,54 +52,6 @@ export default function SettingsPage() {
       await invoke("restart_backend");
     } finally {
       setRestarting(false);
-    }
-  }
-
-  async function checkUpdate() {
-    setChecking(true);
-    setInstallResult(null);
-    try {
-      // 经 Rust 端 .no_proxy() 客户端转发,绕过系统代理对 127.0.0.1 的拦截。
-      const text = await invoke<string>("api_get", { path: "/checkupdate" });
-      setUpdateInfo(JSON.parse(text) as UpdateInfo);
-    } catch (e) {
-      setUpdateInfo({
-        local: "",
-        latest: "",
-        has_update: false,
-        release_url: "https://github.com/MetaCubeX/mihomo/releases/latest",
-        error: String(e),
-      });
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  async function installUpdate() {
-    setInstalling(true);
-    try {
-      // 后端会先 taskkill 在跑的 mihomo,再写入新 exe;失败自动从 .bak 还原。
-      // 下载 16.7 MB 在普通网络下数秒内完成,慢网络可能要 30-60 秒。
-      const r = await invoke<UpdateResult>("download_mihomo_update");
-      setInstallResult(r);
-      if (r.success && updateInfo) {
-        // 安装成功后把当前显示的本地版本同步成新装的版本,并把"有更新"清掉。
-        // 注意:本地正在运行的 mihomo -v 仍是旧的,要等下次测速才会启新进程。
-        // 这里只是 UI 反馈,真实情况看 mihomo 启动日志。
-        setUpdateInfo({
-          ...updateInfo,
-          local: r.new_version,
-          has_update: false,
-        });
-      }
-    } catch (e) {
-      setInstallResult({
-        success: false,
-        new_version: "",
-        error: String(e),
-      });
-    } finally {
-      setInstalling(false);
     }
   }
 

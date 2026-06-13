@@ -1099,7 +1099,12 @@ fn translate_isp(raw: &str) -> String {
 #[tauri::command]
 async fn get_my_ip_info() -> Result<GeoIpInfo, String> {
     use std::net::{IpAddr, Ipv4Addr};
+    // 必须 .no_proxy():这个查询的语义是"本机真实出口在哪"。
+    // 启动时若读到 Windows 系统代理(mihomo)会注入 HTTPS_PROXY/HTTP_PROXY,
+    // reqwest 默认读 env 自动走代理 → ip-api.com 看到的源 IP 是代理节点出口
+    // (洛杉矶等),用户位置显示成代理节点归属地。直连才能拿到本机真实出口。
     let client = reqwest::Client::builder()
+        .no_proxy()
         // 强制本地 IPv4 套接字出网,避免 IPv6 接口被解析到 IPv6 节点
         .local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
         .timeout(std::time::Duration::from_secs(8))

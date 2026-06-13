@@ -14,9 +14,16 @@
 // CI runner 第一次 build 时 LOCALAPPDATA\tauri\NSIS 还没建,Tauri 是在
 // beforeBundleCommand(本脚本)跑完之后才下载 NSIS 工具链,所以早期版本的脚本
 // 在目录不存在时 exit(0) → makensis 用了 NSIS 自带默认 nlf("我接受(&I)" + PgDn 提示),
-// 线上发出去的 setup.exe 永远是错的(本地有 cache 看不出来)。修复策略:目录缺失
-// 时主动下载 Tauri 用的 NSIS zip 并解压到位,Tauri 后续看到目录已就绪会跳过下载,
-// 我们 copy 进去的 nlf/nsh 就不会被覆盖。
+// 线上发出去的 setup.exe 永远是错的(本地有 cache 看不出来)。
+//
+// 第一次修复尝试只下载了 nsis-3.zip 解压,但 Tauri bundler 在 makensis 之前会校验
+// NSIS_REQUIRED_FILES,只要缺一个文件(尤其 Plugins/x86-unicode/additional/
+// nsis_tauri_utils.dll)就 remove_dir_all + 重下整个 NSIS 目录,我们 sync 进去的
+// nlf/nsh 被覆盖。所以本脚本必须完整模拟 Tauri 的 NSIS 安装流程:下载 NSIS zip +
+// 单独下载 nsis_tauri_utils.dll,让 Tauri 校验通过不重建,sync 才能保留下来。
+//
+// URL 跟 Tauri bundler crates/tauri-bundler/src/bundle/windows/nsis/mod.rs 中
+// NSIS_URL / NSIS_TAURI_UTILS_URL 对齐。Tauri 升级 NSIS 版本时需同步更新这里。
 //
 // 仅 Windows 平台执行;其他平台 noop(NSIS 只在 Windows 出包)。
 const fs = require("fs");
@@ -41,10 +48,13 @@ const nsisRoot = path.join(tauriRoot, "NSIS");
 const tauriLangDir = path.join(nsisRoot, "Contrib", "Language files");
 
 // Tauri bundler 写死的 NSIS 工具链下载源(crates/tauri-bundler windows/nsis/mod.rs):
-//   const NSIS_URL = "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3/nsis-3.zip"
-// 解压后里层目录是 nsis-3.08,Tauri 会把它 rename 成 NSIS。
-const NSIS_URL = "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3/nsis-3.zip";
-const NSIS_INNER_DIR = "nsis-3.08";
+//   const NSIS_URL = "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip"
+//   const NSIS_TAURI_UTILS_URL = ".../nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll"
+// 解压后里层目录是 nsis-3.11,Tauri 会把它 rename 成 NSIS。
+const NSIS_URL = "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip";
+const NSIS_INNER_DIR = "nsis-3.11";
+const NSIS_TAURI_UTILS_URL = "https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll";
+const NSIS_TAURI_UTILS_REL_PATH = path.join("Plugins", "x86-unicode", "additional", "nsis_tauri_utils.dll");
 
 function httpDownload(url, dst, redirects = 5) {
     return new Promise((resolve, reject) => {
@@ -69,29 +79,47 @@ function httpDownload(url, dst, redirects = 5) {
 }
 
 async function ensureNsisToolset() {
-    if (fs.existsSync(tauriLangDir)) return;
-    console.log("[sync-nsis-lang] 目录缺失,主动下载 NSIS 工具链以确保 Tauri 后续不再覆盖...");
+    const nsisUtilsAbs = path.join(nsisRoot, NSIS_TAURI_UTILS_REL_PATH);
+    // Tauri 校验目录完整性 = LangFiles 目录在 + nsis_tauri_utils.dll 在。
+    // 缺任一个 Tauri 都会 remove_dir_all 重建,所以两者必须一起齐备。
+    if (fs.existsSync(tauriLangDir) && fs.existsSync(nsisUtilsAbs)) return;
+
+    console.log("[sync-nsis-lang] NSIS 目录缺失或不完整,主动下载完整工具链...");
     fs.mkdirSync(tauriRoot, { recursive: true });
-    const zipPath = path.join(tauriRoot, "nsis-3.zip");
-    await httpDownload(NSIS_URL, zipPath);
-    console.log(`[sync-nsis-lang] 已下载: ${zipPath} (${fs.statSync(zipPath).size} bytes)`);
-    // PowerShell 5+ 内置 Expand-Archive,GitHub Actions windows runner 默认有
-    execFileSync(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command",
-         `Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${tauriRoot.replace(/'/g, "''")}' -Force`],
-        { stdio: "inherit" }
-    );
-    const innerDir = path.join(tauriRoot, NSIS_INNER_DIR);
-    if (fs.existsSync(innerDir)) {
-        if (fs.existsSync(nsisRoot)) fs.rmSync(nsisRoot, { recursive: true, force: true });
-        fs.renameSync(innerDir, nsisRoot);
-    }
-    fs.unlinkSync(zipPath);
+
+    // 1. 下载 + 解压 NSIS 主包(只在 LangFiles 目录缺时做)
     if (!fs.existsSync(tauriLangDir)) {
-        throw new Error(`解压后仍找不到 LangFiles 目录: ${tauriLangDir}`);
+        const zipPath = path.join(tauriRoot, "nsis.zip");
+        await httpDownload(NSIS_URL, zipPath);
+        console.log(`[sync-nsis-lang] 已下载 NSIS: ${zipPath} (${fs.statSync(zipPath).size} bytes)`);
+        execFileSync(
+            "powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-Command",
+             `Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${tauriRoot.replace(/'/g, "''")}' -Force`],
+            { stdio: "inherit" }
+        );
+        const innerDir = path.join(tauriRoot, NSIS_INNER_DIR);
+        if (fs.existsSync(innerDir)) {
+            if (fs.existsSync(nsisRoot)) fs.rmSync(nsisRoot, { recursive: true, force: true });
+            fs.renameSync(innerDir, nsisRoot);
+        }
+        fs.unlinkSync(zipPath);
+        if (!fs.existsSync(tauriLangDir)) {
+            throw new Error(`解压后仍找不到 LangFiles 目录: ${tauriLangDir}`);
+        }
+        console.log(`[sync-nsis-lang] NSIS 主包就绪: ${nsisRoot}`);
     }
-    console.log(`[sync-nsis-lang] NSIS 工具链就绪: ${nsisRoot}`);
+
+    // 2. 下载 nsis_tauri_utils.dll 到 Plugins/x86-unicode/additional/
+    //    Tauri 会校验这个文件的 hash,但版本号写在 URL 里,只要文件存在 Tauri
+    //    最坏情况是 hash 不匹配单独重下这一个,不会触发 remove_dir_all 整个 NSIS。
+    if (!fs.existsSync(nsisUtilsAbs)) {
+        fs.mkdirSync(path.dirname(nsisUtilsAbs), { recursive: true });
+        await httpDownload(NSIS_TAURI_UTILS_URL, nsisUtilsAbs);
+        console.log(`[sync-nsis-lang] 已下载 nsis_tauri_utils.dll: ${nsisUtilsAbs} (${fs.statSync(nsisUtilsAbs).size} bytes)`);
+    }
+
+    console.log(`[sync-nsis-lang] NSIS 工具链就绪(含 tauri utils plugin)`);
 }
 
 // 同步清单:仓库文件名 → 同步到 tauriLangDir 下的同名文件

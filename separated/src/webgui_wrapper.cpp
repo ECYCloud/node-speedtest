@@ -450,6 +450,9 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
                 bool new_has = false;
                 try
                 {
+                    // proxy 传空字符串:libcurl 默认会读 HTTPS_PROXY/HTTP_PROXY 环境变量,
+                    // Tauri 端在启动时把 Windows 系统代理注入到进程 env,子进程继承后自动走代理。
+                    // 直连 GitHub 在国内大陆经常超时或几十 KB/s,走代理后秒回。
                     std::string body = webGet("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", "", 0);
                     if(body.empty())
                         new_error = "GitHub API 无响应(网络受限或被防火墙拦截)";

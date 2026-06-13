@@ -2,10 +2,8 @@ import { Button, Card, SectionTitle } from "../components/ui";
 import { RefreshCw, Monitor, Download, ExternalLink, CheckCircle2, AlertCircle, PackageCheck, Sparkles, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { check as checkAppUpdater, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { getVersion } from "@tauri-apps/api/app";
 import { useState } from "react";
+import { useAppUpdate } from "../store/appUpdate";
 
 // /checkupdate 接口返回结构(由 webgui_wrapper.cpp 序列化):
 //   - local       本地内核版本(mihomo -v 读出)
@@ -35,24 +33,9 @@ type ClearAppDataResult = {
   errors: string[];
 };
 
-// 应用自身更新状态机 — 由 tauri-plugin-updater 驱动:
-//   idle            未检查
-//   checking        正在请求 latest.json
-//   none            已是最新
-//   available       发现新版,等用户确认下载安装
-//   downloading     下载中(received/total 字节,total 可能为 0 表示未知)
-//   installing      下载完成,正在调用平台安装器(NSIS passive / .app 替换 / AppImage 覆盖)
-//   ready           安装完成,即将 relaunch
-//   error           任意阶段失败,带可读错误
-type AppUpdateState =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "none"; current: string }
-  | { kind: "available"; current: string; latest: string; notes: string; update: Update }
-  | { kind: "downloading"; current: string; latest: string; received: number; total: number }
-  | { kind: "installing"; latest: string }
-  | { kind: "ready"; latest: string }
-  | { kind: "error"; message: string };
+// 应用自身更新状态机移到 src/store/appUpdate.ts:
+// 用户离开设置页(组件 unmount)时,之前局部 useState 会被销毁导致进度丢失。
+// 现在状态由 zustand 持有,跨页面切换无缝继续。
 
 const APP_RELEASE_URL = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest";
 
@@ -69,7 +52,10 @@ export default function SettingsPage() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installResult, setInstallResult] = useState<UpdateResult | null>(null);
-  const [appUpdate, setAppUpdate] = useState<AppUpdateState>({ kind: "idle" });
+  // 应用自更新状态由全局 zustand store 持有,避免离开设置页时下载进度丢失
+  const appUpdate = useAppUpdate((s) => s.state);
+  const checkUpdateApp = useAppUpdate((s) => s.check);
+  const installUpdateApp = useAppUpdate((s) => s.install);
   // 二次确认对话框开关:第一次点"清理应用数据"只展开警告,第二次点确认才真正执行
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -81,66 +67,6 @@ export default function SettingsPage() {
       await invoke("restart_backend");
     } finally {
       setRestarting(false);
-    }
-  }
-
-  // 检查应用自身更新:走 tauri-plugin-updater,读 GitHub release 里的 latest.json,
-  // 内部用 minisign 公钥验签;只查不下载,用户确认后再调 installAppUpdate
-  async function checkUpdateApp() {
-    setAppUpdate({ kind: "checking" });
-    try {
-      const update = await checkAppUpdater();
-      if (!update) {
-        // plugin 把当前版本读自 tauri.conf.json,checkAppUpdater 拿不到 update 时只表示"已是最新"
-        const current = await getVersion();
-        setAppUpdate({ kind: "none", current });
-        return;
-      }
-      setAppUpdate({
-        kind: "available",
-        current: update.currentVersion,
-        latest: update.version,
-        notes: update.body ?? "",
-        update,
-      });
-    } catch (e) {
-      setAppUpdate({ kind: "error", message: String(e) });
-    }
-  }
-
-  // 下载并安装:downloadAndInstall 在三平台行为不同
-  //   Windows: 下载 .nsis.zip → 解压 setup.exe → 启动 NSIS(passive 模式带进度)
-  //   macOS:   下载 .app.tar.gz → 解压替换当前 .app → 提示 relaunch
-  //   Linux:   下载 .AppImage → 替换当前 AppImage 文件 → 提示 relaunch
-  // 完成后调 relaunch() 让 Tauri 关掉当前进程并重启新版本
-  async function installUpdateApp() {
-    if (appUpdate.kind !== "available") return;
-    const u = appUpdate.update;
-    const latest = appUpdate.latest;
-    let received = 0;
-    let total = 0;
-    setAppUpdate({ kind: "downloading", current: appUpdate.current, latest, received: 0, total: 0 });
-    try {
-      await u.downloadAndInstall((event) => {
-        switch (event.event) {
-          case "Started":
-            total = event.data.contentLength ?? 0;
-            setAppUpdate({ kind: "downloading", current: appUpdate.current, latest, received: 0, total });
-            break;
-          case "Progress":
-            received += event.data.chunkLength;
-            setAppUpdate({ kind: "downloading", current: appUpdate.current, latest, received, total });
-            break;
-          case "Finished":
-            setAppUpdate({ kind: "installing", latest });
-            break;
-        }
-      });
-      setAppUpdate({ kind: "ready", latest });
-      // Windows passive NSIS 会自己接管,以下 relaunch 主要服务 macOS/Linux
-      await relaunch();
-    } catch (e) {
-      setAppUpdate({ kind: "error", message: String(e) });
     }
   }
 

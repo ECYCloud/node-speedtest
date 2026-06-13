@@ -1418,6 +1418,104 @@ async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> 
     })
 }
 
+/// Windows 启动时把系统代理(注册表 ProxyEnable + ProxyServer)注入到进程环境变量。
+/// reqwest(tauri-plugin-updater 用的)只读 HTTP_PROXY/HTTPS_PROXY,不读 Windows 注册表。
+/// 用户开了系统代理(mihomo/Clash 默认行为)→ 注入后 plugin-updater 自动走代理 → 下载快;
+/// 没开 → 这里 noop,plugin-updater 直连(原有行为)。用 reg query 命令避免引入 winreg 依赖。
+#[cfg(target_os = "windows")]
+fn apply_windows_system_proxy_env() {
+    use std::process::Command;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // 用户已经手动设置过环境变量时不覆盖(尊重显式配置)
+    let user_already_set = std::env::var("HTTP_PROXY").is_ok()
+        || std::env::var("HTTPS_PROXY").is_ok()
+        || std::env::var("http_proxy").is_ok()
+        || std::env::var("https_proxy").is_ok();
+    if user_already_set {
+        return;
+    }
+
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    let read = |value: &str| -> Option<String> {
+        let out = Command::new("reg")
+            .args(["query", key, "/v", value])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        // reg query 输出格式: "    <name>    REG_DWORD    0x1" 或 "    <name>    REG_SZ    127.0.0.1:7897"。
+        // 用 split_whitespace 兼容任意连续空格/制表符,避免 splitn 在连续空格下被切空段。
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 && parts[0] == value {
+                return Some(parts[2..].join(" "));
+            }
+        }
+        None
+    };
+
+    let enable = read("ProxyEnable").unwrap_or_default();
+    let enabled = enable == "0x1" || enable.ends_with("0x1");
+    if !enabled {
+        return;
+    }
+    let server = match read("ProxyServer") {
+        Some(s) if !s.is_empty() => s,
+        _ => return,
+    };
+
+    // ProxyServer 形态: "127.0.0.1:7897" 或 "http=127.0.0.1:7897;https=127.0.0.1:7897;..."
+    // 取第一个有效 host:port,前缀加 http:// 让 reqwest 解析为代理 URL
+    let host_port = if server.contains('=') {
+        server
+            .split(';')
+            .filter_map(|seg| seg.split_once('='))
+            .find_map(|(scheme, addr)| {
+                let s = scheme.trim().to_ascii_lowercase();
+                if s == "http" || s == "https" || s == "all" {
+                    Some(addr.trim().to_string())
+                } else {
+                    None
+                }
+            })
+    } else {
+        Some(server.trim().to_string())
+    };
+    let Some(host_port) = host_port.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let proxy_url = if host_port.starts_with("http://") || host_port.starts_with("https://") {
+        host_port
+    } else {
+        format!("http://{host_port}")
+    };
+
+    // ProxyOverride 是 ; 分隔,reqwest NO_PROXY 用 , 分隔。本地回环必加,
+    // 否则 plugin 自检 / 后端 /api 都会被代理转发引发 connect refused。
+    let overrides = read("ProxyOverride").unwrap_or_default();
+    let mut no_proxy_list: Vec<String> = overrides
+        .split(';')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "<local>")
+        .collect();
+    for must in ["127.0.0.1", "localhost", "::1"] {
+        if !no_proxy_list.iter().any(|x| x == must) {
+            no_proxy_list.push(must.to_string());
+        }
+    }
+    let no_proxy = no_proxy_list.join(",");
+
+    eprintln!("[proxy] using system proxy {proxy_url} (NO_PROXY={no_proxy})");
+    std::env::set_var("HTTP_PROXY", &proxy_url);
+    std::env::set_var("HTTPS_PROXY", &proxy_url);
+    std::env::set_var("NO_PROXY", &no_proxy);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Linux 上 webkit2gtk 4.1 (2.46+) 在 Ubuntu 25.04 / Fedora 40+ / Wayland / 部分
@@ -1439,6 +1537,15 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
+
+    // tauri-plugin-updater 内部用 reqwest 拉 latest.json + setup.exe。
+    // reqwest 默认只读 HTTP_PROXY / HTTPS_PROXY 环境变量,不会读 Windows 系统代理
+    // (HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings)。
+    // 国内大陆直连 GitHub releases 经常超时或几十 KB/s,所以这里在启动时主动读注册表,
+    // 把 mihomo / Clash 之类设置的系统代理 URL 注入到进程环境变量,让 reqwest 自动走代理。
+    // NO_PROXY 兜住 127.0.0.1 / localhost,避免 plugin 自检和后端 API 请求被代理拦截。
+    #[cfg(target_os = "windows")]
+    apply_windows_system_proxy_env();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {

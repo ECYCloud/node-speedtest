@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, History, Settings, Sun, Moon, Sparkles, Compass, ScrollText } from "lucide-react";
+import { Activity, History, Settings, Sun, Moon, Sparkles, Compass, ScrollText, Info } from "lucide-react";
 import { useTheme } from "./store/theme";
 import { startPolling } from "./store/test";
 import { cn } from "./lib/cn";
@@ -79,15 +79,23 @@ function Sidebar({
           </button>
         ))}
       </nav>
-      {/* 版本号点击打开「关于」对话框,展示 MIT/GPL 来源、仓库链接 */}
-      <button
-        onClick={onAbout}
-        title="关于 Stair Speedtest"
-        className="mt-auto px-3 py-3 text-xs text-fg-muted flex items-center gap-2 hover:bg-border/30 hover:text-fg transition text-left"
-      >
-        <Sparkles size={14} />
-        <span>v{__APP_VERSION__}</span>
-      </button>
+      {/* 底部:左侧版本号纯展示,不触发任何弹窗;右侧"关于"按钮(图标+文字)
+          打开 AboutDialog,内含开源声明与仓库链接。 */}
+      <div className="mt-auto px-3 py-3 flex items-center gap-1">
+        <div className="flex-1 inline-flex items-center gap-2 px-3 h-8 text-xs text-fg-muted">
+          <Sparkles size={14} />
+          <span>v{__APP_VERSION__}</span>
+        </div>
+        <button
+          onClick={onAbout}
+          title="关于 Stair Speedtest"
+          aria-label="关于"
+          className="inline-flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-fg-muted hover:bg-border/30 hover:text-fg transition shrink-0"
+        >
+          <Info size={14} />
+          <span>关于</span>
+        </button>
+      </div>
     </aside>
   );
 }
@@ -116,7 +124,11 @@ export default function App() {
 
   return (
     <div className="h-full w-full flex bg-bg text-fg">
-      <Sidebar active={view} onChange={setView} onAbout={() => setAboutOpen(true)} />
+      <Sidebar
+        active={view}
+        onChange={setView}
+        onAbout={() => setAboutOpen(true)}
+      />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar view={view} />
         <main className="flex-1 flex flex-col p-6 overflow-auto min-h-0">

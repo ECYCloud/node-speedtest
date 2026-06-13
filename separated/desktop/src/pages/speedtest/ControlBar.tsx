@@ -32,14 +32,14 @@ export default function ControlBar() {
   // 三态对应三种按钮形态:
   //   running  → "停止"(可点)
   //   stopping → "停止中"(loader,disabled) — 前端已发停止指令,等待后端 batchTest
-  //              真正退出循环并被 polling 拉到。这段时间不切回"开始测速",避免闪烁。
-  //   stopped  → "开始测速"(可点,选中节点 > 0)
+  //              真正退出循环并被 polling 拉到。这段时间不切回"开始测试",避免闪烁。
+  //   stopped  → "开始测试"(可点,选中节点 > 0)
   const running = status === "running";
   const stopping = status === "stopping";
 
   return (
     <Card className="p-5">
-      <SectionTitle desc="选择测试模式后开始测速，运行中可在右侧查看实时进度">
+      <SectionTitle desc="选择测试模式后开始测试，运行中可在右侧查看实时进度">
         测试控制
       </SectionTitle>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -93,7 +93,7 @@ export default function ControlBar() {
               className="min-w-[6.5rem] justify-center"
             >
               <Play size={14} />
-              开始测速
+              开始测试
             </Button>
           )}
         </div>

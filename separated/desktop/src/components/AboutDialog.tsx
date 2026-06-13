@@ -86,7 +86,7 @@ export default function AboutDialog({ open, onClose }: AboutDialogProps) {
               >
                 tindy2013/stairspeedtest-reborn
               </button>
-              {" "}二次开发,采用 MIT 许可证,版权归原作者所有。
+              {" "}二次开发，采用 MIT 许可证，原作者保留版权。
             </p>
             <p className="mt-1.5 text-[13px] leading-relaxed text-fg">
               内置{" "}
@@ -96,7 +96,7 @@ export default function AboutDialog({ open, onClose }: AboutDialogProps) {
               >
                 MetaCubeX/mihomo
               </button>
-              {" "}代理内核(GPL-3.0),作为独立可执行文件随包分发。
+              {" "}代理内核(GPL-3.0)，作为独立可执行文件随包分发。
             </p>
             <p className="mt-2 text-[11px] leading-relaxed text-fg-muted">
               完整许可证文本与源代码获取方式见安装目录下 LICENSE / NOTICE / licenses 文件。

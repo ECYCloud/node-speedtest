@@ -158,9 +158,48 @@ static inline int process_request(Request &request, Response &response, std::str
     return -1;
 }
 
+// OnReq 处理逻辑的实际实现,被外层 OnReq 包一层 try/catch 后调用
+static void OnReq_impl(evhttp_request *req);
+
 void OnReq(evhttp_request *req, void *args)
 {
     (void)args;
+    // 顶层兜底:libevent 的 event_base_dispatch 是 C 风格回调,如果 handler lambda
+    // 里抛 std::exception(rapidjson 解析失败 / std::stoi 溢出 / 文件 IO 异常等)
+    // 而又没有就地 catch,异常会穿过这个 C 边界 = std::terminate,worker 线程
+    // 死掉甚至整个后端 abort,4 个 worker 死光后 webserver hang,前端"后端未连接"。
+    // 这里把整个 OnReq 包起来:任何 handler 抛异常都被吞,改成 500 + 错误 body
+    // 返回给前端,worker 线程不死,后端整体存活。日志里记录详情供排查。
+    try
+    {
+        OnReq_impl(req);
+    }
+    catch(const std::exception &e)
+    {
+        writeLog(0, std::string("OnReq caught std::exception: ") + e.what(), LOG_LEVEL_ERROR);
+        std::string body = std::string("Backend handler exception: ") + e.what();
+        auto *OutBuf = evhttp_request_get_output_buffer(req);
+        if(OutBuf)
+        {
+            evhttp_add_header(req->output_headers, "Access-Control-Allow-Origin", "*");
+            evhttp_add_header(req->output_headers, "Content-Type", "text/plain;charset=utf-8");
+            evbuffer_add(OutBuf, body.data(), body.size());
+            evhttp_send_reply(req, HTTP_INTERNAL, "", OutBuf);
+        }
+        else
+        {
+            evhttp_send_error(req, HTTP_INTERNAL, "");
+        }
+    }
+    catch(...)
+    {
+        writeLog(0, "OnReq caught unknown exception", LOG_LEVEL_ERROR);
+        evhttp_send_error(req, HTTP_INTERNAL, "");
+    }
+}
+
+static void OnReq_impl(evhttp_request *req)
+{
     const char *req_content_type = evhttp_find_header(req->input_headers, "Content-Type"), *req_ac_method = evhttp_find_header(req->input_headers, "Access-Control-Request-Method");
     const char *uri = req->uri;
 

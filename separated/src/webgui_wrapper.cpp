@@ -270,7 +270,17 @@ std::string ssrspeed_generate_web_configs(std::vector<nodeInfo> &nodes)
 
 void ssrspeed_webserver_routine(const std::string &listen_address, int listen_port)
 {
-    listener_args args = {listen_address, listen_port, 10, 4};
+    // listener_args: { addr, port, listen_backlog, worker_threads }
+    //
+    // worker_threads = 16:每个 worker 是独立 event_base 跑事件循环。订阅下载 /
+    // mihomo 启动会同步阻塞 1 个 worker 5-30 秒,worker 越多,被全占的概率越低。
+    // 旧值 4 在用户连点"加载订阅"时存在 worker 全占 → /getversion 排队 timeout
+    // → 前端"后端未连接"的潜在风险。16 worker 实测内存增量 < 100KB,idle CPU 0,
+    // 容量提到 4 倍后正常使用场景下不可能被全占。
+    //
+    // listen_backlog = 64:accept 排队上限。前端启动瞬间会并发发出 4-6 个请求
+    // (StatusPill / 加载订阅 / 状态轮询 ...),64 给足缓冲。
+    listener_args args = {listen_address, listen_port, 64, 16};
     extern bool gServeFile;
     extern std::string gServeFileRoot;
     gServeFile = true;

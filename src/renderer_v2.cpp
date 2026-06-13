@@ -155,10 +155,14 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     int n_count = static_cast<int>(nodes.size());
 
     // Resolve banner title from any non-empty group; collect totals.
+    // 同步判定是否进入"仅延迟模式":任一节点拿到了真实速度数据(avgSpeed 既非
+    // 默认 "N/A" 也非空)就显示速度三列;全员 N/A 即 pingonly 模式或全节点失败,
+    // 两种情况下速度列都没有展示价值,一并隐藏更整洁。
     std::string banner = "Stair Speedtest Reborn";
     int onlines = 0;
     long long total_traffic = 0;
     int test_duration = 0;
+    bool show_speed_cols = false;
     for(const auto &x : nodes)
     {
         if(banner == "Stair Speedtest Reborn" && !x.group.empty())
@@ -166,7 +170,10 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
         if(x.online) onlines++;
         total_traffic += x.totalRecvBytes;
         test_duration += x.duration;
+        if(!show_speed_cols && !x.avgSpeed.empty() && x.avgSpeed != "N/A")
+            show_speed_cols = true;
     }
+    (void)export_with_maxSpeed; // legacy ini flag, 当前由数据驱动自动判定
 
     // Title: "<group> - Stair Speedtest Reborn" (no sort suffix, no bg band).
     std::string title = banner + " - Stair Speedtest Reborn";
@@ -194,11 +201,17 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     // 单列延迟 — 已合并 HTTP/HTTPS 两列(2025-10),HTTPS generate_204 足以反映链路质量
     int ping_w = col_for("延迟",
                          [&](int i){ return formatPing(nodes[i].sitePing); }, 0);
-    int avg_w  = col_for("平均速度",
-                         [&](int i){ return nodes[i].avgSpeed; }, 0);
-    int max_w  = col_for("最高速度",
-                         [&](int i){ return nodes[i].maxSpeed; }, 0);
-    int spark_w = std::max(spark_min, measure(probe, font, fs, "每秒速度") + cell_pad);
+    // 仅延迟模式下三列宽度归零,total_width 自动收缩,sparkline/平均/最高速度的
+    // 绘制循环也会跳过这些列,不留空白条
+    int avg_w   = 0;
+    int max_w   = 0;
+    int spark_w = 0;
+    if(show_speed_cols)
+    {
+        avg_w   = col_for("平均速度", [&](int i){ return nodes[i].avgSpeed; }, 0);
+        max_w   = col_for("最高速度", [&](int i){ return nodes[i].maxSpeed; }, 0);
+        spark_w = std::max(spark_min, measure(probe, font, fs, "每秒速度") + cell_pad);
+    }
 
     int total_width = idx_col_w + name_w + type_w + ping_w
                     + avg_w + max_w + spark_w;
@@ -268,9 +281,12 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     cellText(col_x[1], col_x[2], yt, "节点名称",  fs, TX, TY, TZ);
     cellText(col_x[2], col_x[3], yt, "类型",      fs, TX, TY, TZ);
     cellText(col_x[3], col_x[4], yt, "延迟",      fs, TX, TY, TZ);
-    cellText(col_x[4], col_x[5], yt, "平均速度",  fs, TX, TY, TZ);
-    cellText(col_x[5], col_x[6], yt, "最高速度",  fs, TX, TY, TZ);
-    cellText(col_x[6], col_x[7], yt, "每秒速度",  fs, TX, TY, TZ);
+    if(show_speed_cols)
+    {
+        cellText(col_x[4], col_x[5], yt, "平均速度",  fs, TX, TY, TZ);
+        cellText(col_x[5], col_x[6], yt, "最高速度",  fs, TX, TY, TZ);
+        cellText(col_x[6], col_x[7], yt, "每秒速度",  fs, TX, TY, TZ);
+    }
     yt += row_h;
 
     // -------- Data rows --------
@@ -311,45 +327,48 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
             cellText(col_x[3], col_x[4], yt, formatPing(n.sitePing), fs, TX, TY, TZ);
         }
 
-        // Avg speed cell: gradient bg + black text.
+        if(show_speed_cols)
         {
-            color bg; getSpeedColor(n.avgSpeed, &bg);
-            cellRect(col_x[4], col_x[5], yt, row_h,
-                     bg.red / 65535.0, bg.green / 65535.0, bg.blue / 65535.0);
-            cellText(col_x[4], col_x[5], yt, n.avgSpeed, fs, TX, TY, TZ);
-        }
-
-        // Max speed cell.
-        {
-            color bg; getSpeedColor(n.maxSpeed, &bg);
-            cellRect(col_x[5], col_x[6], yt, row_h,
-                     bg.red / 65535.0, bg.green / 65535.0, bg.blue / 65535.0);
-            cellText(col_x[5], col_x[6], yt, n.maxSpeed, fs, TX, TY, TZ);
-        }
-
-        // Per-second sparkline of rawSpeed[20] (pink bars).
-        {
-            unsigned long long peak = 0;
-            for(int j = 0; j < 20; ++j)
-                if(n.rawSpeed[j] > peak) peak = n.rawSpeed[j];
-            int sx0 = col_x[6] + 6 * S;
-            int sy0 = rowY(yt + row_h - 3 * S);
-            int sw  = (col_x[7] - col_x[6]) - 12 * S;
-            int sh  = row_h - 8 * S;
-            if(peak == 0)
+            // Avg speed cell: gradient bg + black text.
             {
-                cellText(col_x[6], col_x[7], yt, "-", fs, TX, TY, TZ);
+                color bg; getSpeedColor(n.avgSpeed, &bg);
+                cellRect(col_x[4], col_x[5], yt, row_h,
+                         bg.red / 65535.0, bg.green / 65535.0, bg.blue / 65535.0);
+                cellText(col_x[4], col_x[5], yt, n.avgSpeed, fs, TX, TY, TZ);
             }
-            else
+
+            // Max speed cell.
             {
-                int per = std::max(1, sw / 20);
+                color bg; getSpeedColor(n.maxSpeed, &bg);
+                cellRect(col_x[5], col_x[6], yt, row_h,
+                         bg.red / 65535.0, bg.green / 65535.0, bg.blue / 65535.0);
+                cellText(col_x[5], col_x[6], yt, n.maxSpeed, fs, TX, TY, TZ);
+            }
+
+            // Per-second sparkline of rawSpeed[20] (pink bars).
+            {
+                unsigned long long peak = 0;
                 for(int j = 0; j < 20; ++j)
+                    if(n.rawSpeed[j] > peak) peak = n.rawSpeed[j];
+                int sx0 = col_x[6] + 6 * S;
+                int sy0 = rowY(yt + row_h - 3 * S);
+                int sw  = (col_x[7] - col_x[6]) - 12 * S;
+                int sh  = row_h - 8 * S;
+                if(peak == 0)
                 {
-                    int hh = static_cast<int>(static_cast<double>(n.rawSpeed[j]) / peak * sh);
-                    if(hh <= 0) continue;
-                    png.filledsquare(sx0 + j * per, sy0,
-                                     sx0 + (j + 1) * per - 1, sy0 + hh,
-                                     0.95, 0.42, 0.60);
+                    cellText(col_x[6], col_x[7], yt, "-", fs, TX, TY, TZ);
+                }
+                else
+                {
+                    int per = std::max(1, sw / 20);
+                    for(int j = 0; j < 20; ++j)
+                    {
+                        int hh = static_cast<int>(static_cast<double>(n.rawSpeed[j]) / peak * sh);
+                        if(hh <= 0) continue;
+                        png.filledsquare(sx0 + j * per, sy0,
+                                         sx0 + (j + 1) * per - 1, sy0 + hh,
+                                         0.95, 0.42, 0.60);
+                    }
                 }
             }
         }
@@ -361,7 +380,9 @@ std::string exportRender(std::string resultpath, std::vector<nodeInfo> &nodes,
     }
 
     // -------- Vertical column separators across header + data rows --------
-    for(int c = 1; c < 7; ++c)
+    // 仅延迟模式只画到延迟列前(c=1..3),速度三列不存在,不需要竖线
+    int sep_end = show_speed_cols ? 7 : 4;
+    for(int c = 1; c < sep_end; ++c)
         png.line(col_x[c], rowY(rows_top), col_x[c], rowY(rows_bottom),
                  0.85, 0.86, 0.88);
 

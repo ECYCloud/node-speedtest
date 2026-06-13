@@ -10,6 +10,17 @@ use tauri::{AppHandle, Manager, RunEvent, State};
 /// 避免应用关闭瞬间(主进程已经 kill 掉子进程)还触发"自动重启"把僵尸再拉起来。
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
+/// supervisor 唤醒通道:前端 invoke 实际命中 reqwest send 错误(连接失败 /
+/// 超时 / 连接断)时,Rust 侧调 notify_one() 把 supervisor 从 notified().await
+/// 阻塞中唤醒。supervisor 整个生命周期没有定时器,**唯一驱动源就是这个事件**:
+/// 用户感知到失败的同一时刻 supervisor 才动手,毫秒级响应。HTTP 4xx/5xx 不通过
+/// 这里(那是后端正常拒绝,不是掉线)。
+fn supervisor_wakeup() -> &'static tokio::sync::Notify {
+    use std::sync::OnceLock;
+    static N: OnceLock<tokio::sync::Notify> = OnceLock::new();
+    N.get_or_init(tokio::sync::Notify::new)
+}
+
 /// 后端进程统一监听地址,与 stairspeedtest pref.ini 的 [webserver] 默认值保持一致
 const BACKEND_URL: &str = "http://127.0.0.1:10870";
 
@@ -227,30 +238,45 @@ fn spawn_backend(app: &AppHandle) -> Result<Child, String> {
     cmd.spawn().map_err(|e| format!("启动后端失败: {e}"))
 }
 
-/// sidecar supervisor:每 3 秒检查后端子进程是否还活着,崩了就清理孤儿 + 重启。
+/// sidecar supervisor:**纯事件驱动**,后端被前端感知到离线时立即重启。
 ///
-/// 根因:此前 spawn_backend 后没人监督,后端一旦崩溃(rapidjson assert / 内核段错误 / 内存
-/// 异常),前端 Status 就永远红下去,用户必须自己点"设置 → 重启后端"才能恢复。
-/// 现在做成自愈:用户基本无感知,UI 最多红几秒。
+/// 根因:此前 spawn_backend 后没人监督,后端一旦崩溃(rapidjson assert / 内核段错误 /
+/// mihomo 死锁 / libevent 阻塞)前端 Status 就永远红下去,用户必须自己点"设置 → 重启后端"。
+/// 现在做成自愈:用户感知到失败的同一时刻 supervisor 已经在重启了。
+///
+/// 工作模型:
+///   - 阻塞在 `supervisor_wakeup().notified()` 上等事件,**没有任何定时器在转**
+///   - 唤醒源:api_get / api_post_json / api_post_file 在 reqwest send/text 错误时
+///     调 `notify_one()`(网络层失败,非业务 4xx/5xx)
+///   - 唤醒后做一次确认探活防止单次抖动误杀:
+///     - 进程已退出 → 直接重启
+///     - 进程在 + /getversion 探活成功 → 偶发抖动,后端其实健康,本轮不动
+///     - 进程在 + 探活失败 → 端口在但内核僵化(死锁 / hang),kill 后重启
 ///
 /// 与 restart_backend 共用 BackendState.child 这把锁:supervisor 持锁判断 + 持锁 spawn,
 /// restart_backend 也持锁到 spawn 完成,二者不会 race 出"中间态 None → 误重启"。
 async fn supervisor_loop(handle: AppHandle) {
     use std::time::{Duration, Instant};
-    // 启动后给主流程 5 秒缓冲,等首个 spawn_backend 落定再开始监督
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    // setup 流程先 spawn_backend 再 spawn(supervisor_loop),supervisor 进 loop 时
+    // 进程已经在跑,无需启动缓冲;直接进入事件等待。
     let mut last_restart_at = Instant::now() - Duration::from_secs(60);
     loop {
         if SHUTTING_DOWN.load(Ordering::SeqCst) {
             return;
         }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        // 阻塞等事件:前端 reqwest 失败时 notify_one() 唤醒。没有任何定时器,
+        // 没人触发就一直等,体感"用户感知失败 → supervisor 同一时刻动手"。
+        supervisor_wakeup().notified().await;
         if SHUTTING_DOWN.load(Ordering::SeqCst) {
             return;
         }
 
-        // 持锁判断:try_wait 需要 &mut Child,直接在 guard 里调
-        let need_respawn = {
+        // 第一步:持锁判断进程状态,Mutex 不是 async 的所以 await 必须放锁外
+        enum ProcessState {
+            Alive,        // 进程在跑,继续做 HTTP 确认探活
+            Exited,       // try_wait 拿到 status / 出错 / state 是 None,直接重启
+        }
+        let proc_state = {
             let state = handle.state::<BackendState>();
             let mut guard = match state.child.lock() {
                 Ok(g) => g,
@@ -261,18 +287,39 @@ async fn supervisor_loop(handle: AppHandle) {
                     Ok(Some(status)) => {
                         eprintln!("[supervisor] 后端进程已退出 (status={status:?}),将重启");
                         *guard = None;
-                        true
+                        ProcessState::Exited
                     }
-                    Ok(None) => false,
+                    Ok(None) => ProcessState::Alive,
                     Err(e) => {
                         eprintln!("[supervisor] try_wait 出错: {e},按崩溃处理");
                         *guard = None;
-                        true
+                        ProcessState::Exited
                     }
                 },
                 // None 表示 setup 时 spawn 失败、或 restart_backend 异常路径,
                 // 也补一次自动起
-                None => true,
+                None => ProcessState::Exited,
+            }
+        };
+
+        // 第二步:进程还在的话做一次确认探活;失败即判定 hang,主动 kill 走重启路径。
+        // 单次定生死 — 触发源是用户实际请求失败,信任度高,不再额外累计计数。
+        let need_respawn = match proc_state {
+            ProcessState::Exited => true,
+            ProcessState::Alive => {
+                if check_backend_alive().await {
+                    // 后端其实健康,刚才那次失败是偶发抖动,不动
+                    false
+                } else {
+                    eprintln!("[supervisor] /getversion 探活失败,后端僵化,主动 kill 进入重启");
+                    let state = handle.state::<BackendState>();
+                    if let Ok(mut guard) = state.child.lock() {
+                        if let Some(mut c) = guard.take() {
+                            kill_backend_tree(&mut c);
+                        }
+                    }
+                    true
+                }
             }
         };
 
@@ -280,13 +327,11 @@ async fn supervisor_loop(handle: AppHandle) {
             continue;
         }
 
-        // 防抖:两次重启至少间隔 3s,避免持续崩溃时拉起风暴
-        let now = Instant::now();
-        if now.duration_since(last_restart_at) < Duration::from_secs(3) {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            if SHUTTING_DOWN.load(Ordering::SeqCst) {
-                return;
-            }
+        // 防抖:距离上次重启不到 3s 就放弃本轮,回 await 等下一次事件。
+        // 不主动 sleep — Notify 不累积,前端高频失败只会让 supervisor 反复
+        // "醒来 + 比较时间 + continue",毫秒级 noop,不会爆 CPU。
+        if Instant::now().duration_since(last_restart_at) < Duration::from_secs(3) {
+            continue;
         }
         last_restart_at = Instant::now();
 
@@ -308,6 +353,19 @@ async fn supervisor_loop(handle: AppHandle) {
             }
             Err(e) => eprintln!("[supervisor] 自动重启失败: {e}"),
         }
+    }
+}
+
+/// HTTP 探活:GET /getversion,3s 内拿到 2xx 视为健康。3s 上限大于普通响应耗时
+/// 一个数量级,既不会被偶发抖动误判,也能在内核 hang 时尽快触发重启。
+async fn check_backend_alive() -> bool {
+    use std::time::Duration;
+    let fut = local_backend_client()
+        .get(format!("{}/getversion", BACKEND_URL))
+        .send();
+    match tokio::time::timeout(Duration::from_secs(3), fut).await {
+        Ok(Ok(r)) => r.status().is_success(),
+        _ => false,
     }
 }
 
@@ -588,6 +646,10 @@ fn pick_client(path: &str) -> &'static reqwest::Client {
 
 /// 通过 Rust 侧 reqwest 代理向后端发起请求,绕过 webview 的 mixed-content / CORS 限制
 /// 以及系统代理拦截 127.0.0.1 的问题。统一走 invoke + .no_proxy() 是最稳的做法。
+///
+/// 网络层失败(reqwest::Error,非 HTTP 业务码)会通过 supervisor_wakeup 唤醒
+/// supervisor 立即做确认探活并按需重启。这是 supervisor 的唯一驱动源 —
+/// 用户感知到失败的同一时刻 supervisor 才动手,没有任何后台定时器在转。
 #[tauri::command]
 async fn api_get(path: String) -> Result<String, String> {
     let url = format!("{}{}", BACKEND_URL, path);
@@ -595,9 +657,15 @@ async fn api_get(path: String) -> Result<String, String> {
         .get(&url)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            supervisor_wakeup().notify_one();
+            e.to_string()
+        })?;
     let status = res.status();
-    let text = res.text().await.map_err(|e| e.to_string())?;
+    let text = res.text().await.map_err(|e| {
+        supervisor_wakeup().notify_one();
+        e.to_string()
+    })?;
     if !status.is_success() {
         return Err(format!("{} {}: {}", path, status.as_u16(), text));
     }
@@ -613,9 +681,15 @@ async fn api_post_json(path: String, body: String) -> Result<String, String> {
         .body(body)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            supervisor_wakeup().notify_one();
+            e.to_string()
+        })?;
     let status = res.status();
-    let text = res.text().await.map_err(|e| e.to_string())?;
+    let text = res.text().await.map_err(|e| {
+        supervisor_wakeup().notify_one();
+        e.to_string()
+    })?;
     if !status.is_success() {
         return Err(format!("{} {}: {}", path, status.as_u16(), text));
     }
@@ -637,9 +711,15 @@ async fn api_post_file(
         .multipart(form)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            supervisor_wakeup().notify_one();
+            e.to_string()
+        })?;
     let status = res.status();
-    let text = res.text().await.map_err(|e| e.to_string())?;
+    let text = res.text().await.map_err(|e| {
+        supervisor_wakeup().notify_one();
+        e.to_string()
+    })?;
     if !status.is_success() {
         return Err(format!("{} {}: {}", path, status.as_u16(), text));
     }
@@ -696,6 +776,91 @@ fn restart_backend(app: AppHandle, state: State<BackendState>) -> Result<(), Str
     let new_child = spawn_backend(&app)?;
     *guard = Some(new_child);
     Ok(())
+}
+
+/// clear_app_data 返回结构:report 里把删了哪些路径告诉前端用于展示,
+/// 即使 best-effort 删除遇到部分占用失败,也用 errors 把跳过的项汇总。
+#[derive(Serialize)]
+struct ClearAppDataResult {
+    cleared: Vec<String>,
+    errors: Vec<String>,
+}
+
+/// 删除"应用程序数据":与 NSIS 卸载向导的"删除应用程序数据"勾选项语义对齐,
+/// 但范围收敛到我们自己写入的 engine 子目录(测速结果 / 日志 / 订阅记录 / mihomo
+/// 缓存 / pref.ini),webview 缓存被当前进程占用删不掉,留给 OS 在退出后释放。
+///
+/// 流程:
+///   1. 停掉后端 child + mihomo 内核,释放对 engine/ 下文件的占用句柄
+///   2. 关闭 supervisor 自动重启(SHUTTING_DOWN 置位),避免删完目录又被拉起来
+///   3. best-effort 递归删除 runtime_engine_dir 与 panic.log
+///   4. 命令返回后由 main 端短暂延迟再调 app.restart() 重启应用,
+///      下次启动 ensure_runtime_engine 会从 bundle 重建 engine
+///
+/// 用 app.restart() 而不是前端 close():后者要 plugin:window|close 的 ACL,
+/// 默认 capability 没授权会被拒(用户实际看到 "Command plugin:window|close
+/// not allowed by ACL")。app.restart() 走 Tauri Manager 直通,不受 ACL 影响。
+///
+/// dev 模式直接拒绝:dev 下 runtime_engine_dir 指向仓库 engine/,误删后开发环境会废。
+#[tauri::command]
+fn clear_app_data(
+    app: AppHandle,
+    state: State<BackendState>,
+) -> Result<ClearAppDataResult, String> {
+    #[cfg(debug_assertions)]
+    {
+        let _ = (app, state);
+        return Err("开发模式下禁止清理应用数据,以免误删仓库 engine 目录".into());
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        // 1. 停后端,持锁直到 child 真正退出,supervisor 看不到 None 不会误重启
+        SHUTTING_DOWN.store(true, Ordering::SeqCst);
+        {
+            let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+            if let Some(mut c) = guard.take() {
+                kill_backend_tree(&mut c);
+            }
+        }
+        // 2. 兜底再杀一遍 mihomo 孤儿,确保 cache.db / logs/ 句柄全释放
+        cleanup_orphans();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        let mut cleared: Vec<String> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+
+        // 3. runtime engine 目录:测速记录 / 日志 / 订阅 / mihomo 缓存 / pref.ini 都在这
+        let engine = runtime_engine_dir(&app)?;
+        if engine.exists() {
+            match std::fs::remove_dir_all(&engine) {
+                Ok(_) => cleared.push(engine.display().to_string()),
+                Err(e) => errors.push(format!("{}: {e}", engine.display())),
+            }
+        }
+
+        // 4. panic.log 在 %APPDATA%\com.stairspeedtest.desktop 下,与 main.rs 的
+        //    panic_log_path 保持同一路径,避免历史崩溃记录残留
+        if let Ok(roaming) = app.path().app_data_dir() {
+            let panic_log = roaming.join("panic.log");
+            if panic_log.exists() {
+                match std::fs::remove_file(&panic_log) {
+                    Ok(_) => cleared.push(panic_log.display().to_string()),
+                    Err(e) => errors.push(format!("{}: {e}", panic_log.display())),
+                }
+            }
+        }
+
+        // 5. 调度重启:延迟 300ms 让本次 invoke 的响应先回到前端,然后整进程
+        //    abort 拉起新实例。app.restart() 内部会发 RunEvent::Exit,
+        //    supervisor 已经被 SHUTTING_DOWN 关掉不会再起 mihomo。
+        let h = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            h.restart();
+        });
+
+        Ok(ClearAppDataResult { cleared, errors })
+    }
 }
 
 #[derive(Serialize)]
@@ -1073,6 +1238,122 @@ struct UpdateResult {
     error: String,
 }
 
+/// 应用自身更新检查结果。前端按 has_update 决定是否提示用户跳到 release_url 手动下载。
+/// 不做自动替换:主程序 exe 与 NSIS 安装包结构强绑定,简单覆盖二进制无法保证升级一致性。
+#[derive(Serialize)]
+struct AppUpdateInfo {
+    local: String,
+    latest: String,
+    has_update: bool,
+    release_url: String,
+    error: String,
+}
+
+/// 与 C++ 后端 compareKernelVersion 等价:剥离 v/V 前缀后按 "." 分段做整数比较,
+/// 缺位补 0。"v1.9" < "v1.19" 走的是数值比较,不是字典序。
+fn compare_semver(a: &str, b: &str) -> std::cmp::Ordering {
+    fn strip(v: &str) -> &str {
+        v.strip_prefix(['v', 'V']).unwrap_or(v)
+    }
+    let sa: Vec<i64> = strip(a).split('.').map(|s| s.parse().unwrap_or(0)).collect();
+    let sb: Vec<i64> = strip(b).split('.').map(|s| s.parse().unwrap_or(0)).collect();
+    let n = sa.len().max(sb.len());
+    for i in 0..n {
+        let x = sa.get(i).copied().unwrap_or(0);
+        let y = sb.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x.cmp(&y);
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// 查询 stair-speedtest 自身的最新发行版(GitHub: ECYCloud/stairspeedtest-reborn-mihomo)。
+/// 与 mihomo 检查接口对称:走系统代理(国内直连 api.github.com 多被限速),
+/// tag_name 对比本地 CARGO_PKG_VERSION 决定是否提示用户去 release 页下载。
+#[tauri::command]
+async fn check_app_update() -> Result<AppUpdateInfo, String> {
+    const RELEASE_PAGE: &str = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest";
+    let local = env!("CARGO_PKG_VERSION").to_string();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("stairspeedtest-reborn-desktop")
+        .build()
+        .map_err(|e| format!("创建检查 client 失败: {e}"))?;
+
+    let resp = match client
+        .get("https://api.github.com/repos/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(AppUpdateInfo {
+                local,
+                latest: String::new(),
+                has_update: false,
+                release_url: RELEASE_PAGE.into(),
+                error: format!("访问 GitHub 失败: {e}"),
+            });
+        }
+    };
+
+    if !resp.status().is_success() {
+        return Ok(AppUpdateInfo {
+            local,
+            latest: String::new(),
+            has_update: false,
+            release_url: RELEASE_PAGE.into(),
+            error: format!("GitHub API 返回 {}", resp.status()),
+        });
+    }
+
+    let release: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(AppUpdateInfo {
+                local,
+                latest: String::new(),
+                has_update: false,
+                release_url: RELEASE_PAGE.into(),
+                error: format!("解析 release JSON 失败: {e}"),
+            });
+        }
+    };
+
+    let latest = release
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let html_url = release
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or(RELEASE_PAGE)
+        .to_string();
+
+    if latest.is_empty() {
+        return Ok(AppUpdateInfo {
+            local,
+            latest,
+            has_update: false,
+            release_url: html_url,
+            error: "release 缺少 tag_name 字段".into(),
+        });
+    }
+
+    let has_update = compare_semver(&latest, &local) == std::cmp::Ordering::Greater;
+    Ok(AppUpdateInfo {
+        local,
+        latest,
+        has_update,
+        release_url: html_url,
+        error: String::new(),
+    })
+}
+
 #[tauri::command]
 async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> {
     use std::io::Read;
@@ -1335,6 +1616,7 @@ pub fn run() {
             api_post_file,
             import_config_file,
             restart_backend,
+            clear_app_data,
             list_history,
             read_file_base64,
             list_log_files,
@@ -1343,6 +1625,7 @@ pub fn run() {
             clear_history,
             export_history,
             get_my_ip_info,
+            check_app_update,
             download_mihomo_update
         ])
         .build(tauri::generate_context!())

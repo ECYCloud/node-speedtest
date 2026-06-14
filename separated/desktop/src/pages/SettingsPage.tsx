@@ -104,12 +104,12 @@ export default function SettingsPage() {
           </Button>
           {(appUpdate.kind === "none" || appUpdate.kind === "available" || appUpdate.kind === "downloading") && (
             <span className="text-sm text-fg-muted">
-              本地 <code className="text-xs">v{
-                appUpdate.kind === "none" ? appUpdate.current :
-                appUpdate.kind === "available" ? appUpdate.current :
-                appUpdate.current
-              }</code>
-              {(appUpdate.kind === "available" || appUpdate.kind === "downloading") && (
+              本地 <code className="text-xs">v{appUpdate.current}</code>
+              {/* none 分支的 latest 来自后端 /checkappupdate(打 GitHub releases),
+                  available/downloading 来自 plugin-updater。GitHub 不可达时 none.latest
+                  为空串,此时只显示本地版本,不渲染"· 最新"以免出现"最新 v"的尾巴。 */}
+              {((appUpdate.kind === "available" || appUpdate.kind === "downloading") ||
+                (appUpdate.kind === "none" && appUpdate.latest)) && (
                 <>
                   <span className="mx-2">·</span>
                   最新 <code className="text-xs">v{appUpdate.latest}</code>

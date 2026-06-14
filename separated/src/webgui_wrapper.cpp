@@ -4,6 +4,7 @@
 #include <mutex>
 #include <algorithm>
 #include <atomic>
+#include <functional>
 
 #include "webserver.h"
 #include "misc.h"
@@ -268,6 +269,100 @@ std::string ssrspeed_generate_web_configs(std::vector<nodeInfo> &nodes)
     return sb.GetString();
 }
 
+// 通用 GitHub /releases/latest 检查 - mihomo 内核与软件自身两个 /check*update
+// 路由共享同一套缓存 + 异步刷新 + 系统代理逻辑,这里集中实现避免重复一份。
+struct UpdateCheckCache
+{
+    std::mutex mu;
+    std::string latest;
+    std::string error;
+    bool has_update = false;
+    time_t at = 0;
+    std::atomic<bool> refreshing{false};
+};
+
+// local_provider 每次进路由时取一次本地版本：mihomo 路由读 mihomo_kernel_version
+// (启动晚期才填好),软件自更新读 VERSION 宏(编译期常量)。
+static std::string serveUpdateCheck(UpdateCheckCache &cache,
+                                    const std::string &api_url,
+                                    const std::string &release_url,
+                                    std::function<std::string()> local_provider)
+{
+    static const time_t CACHE_TTL = 1800; // 30 分钟
+
+    std::string local = local_provider();
+    std::string latest, error;
+    bool has_update = false;
+    time_t at;
+    bool stale;
+    {
+        std::lock_guard<std::mutex> lk(cache.mu);
+        latest = cache.latest;
+        error = cache.error;
+        has_update = cache.has_update;
+        at = cache.at;
+        stale = (at == 0) || (time(NULL) - at > CACHE_TTL);
+    }
+
+    if(stale && !cache.refreshing.exchange(true))
+    {
+        std::thread([&cache, api_url, local_provider]()
+        {
+            std::string new_latest, new_error;
+            bool new_has = false;
+            try
+            {
+                // proxy 传空:libcurl 自动读 HTTPS_PROXY/HTTP_PROXY 环境变量。
+                // Tauri 启动时把 Windows 系统代理注入进程 env,直连 GitHub 在国内
+                // 经常超时,走代理后秒回。
+                std::string body = webGet(api_url, "", 0);
+                if(body.empty())
+                    new_error = "GitHub API 无响应(网络受限或被防火墙拦截)";
+                else
+                {
+                    rapidjson::Document j;
+                    j.Parse(body.data());
+                    if(j.HasParseError() || !j.HasMember("tag_name") || !j["tag_name"].IsString())
+                        new_error = "GitHub API 返回了非预期的内容";
+                    else
+                    {
+                        new_latest = j["tag_name"].GetString();
+                        std::string local_now = local_provider();
+                        if(!new_latest.empty() && !local_now.empty())
+                            new_has = compareKernelVersion(new_latest, local_now) > 0;
+                    }
+                }
+            }
+            catch(const std::exception &e) { new_error = std::string("检查失败:") + e.what(); }
+            catch(...) { new_error = "检查失败(未知异常)"; }
+            {
+                std::lock_guard<std::mutex> lk(cache.mu);
+                cache.latest = new_latest;
+                cache.error = new_error;
+                cache.has_update = new_has;
+                cache.at = time(NULL);
+            }
+            cache.refreshing.store(false);
+        }).detach();
+    }
+
+    // 第一次访问 cache 还空,给前端温和的"正在检查"信号让其轮询。
+    if(latest.empty() && error.empty() && at == 0)
+        error = "正在检查...";
+
+    rapidjson::StringBuffer sb;
+    rapidjson::Writer<rapidjson::StringBuffer> w(sb);
+    w.StartObject();
+    w.Key("local");       w.String(local.data());
+    w.Key("latest");      w.String(latest.data());
+    w.Key("has_update");  w.Bool(has_update);
+    w.Key("release_url"); w.String(release_url.data());
+    w.Key("error");       w.String(error.data());
+    w.EndObject();
+    return sb.GetString();
+}
+
+
 void ssrspeed_webserver_routine(const std::string &listen_address, int listen_port)
 {
     // listener_args: { addr, port, listen_backlog, worker_threads }
@@ -412,91 +507,32 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         return ssrspeed_generate_results(targetNodes);
     });
 
-    // 异步检查 mihomo 内核更新:维持文件级 cache,handler 立刻返 cache,
+    // 异步检查 mihomo 内核更新 / 软件自更新:维持文件级 cache,handler 立刻返 cache,
     // cache 过期或缺失时由后台线程刷新。原先同步 webGet GitHub API 会阻塞
     // 当前 worker 线程最长 15s(国内网络通常受限),期间该 worker 上排队
     // 的 /getversion 直接 timeout → 前端"后端未连接"。
     append_response("GET", "/checkupdate", "application/json;charset=utf-8", [](RESPONSE_CALLBACK_ARGS) -> std::string
     {
         (void)request;
-        // 30 分钟刷新一次足够;期间多次访问都直接命中 cache。
-        static const time_t CACHE_TTL = 1800;
-        static std::mutex cache_mu;
-        static std::string cached_latest;
-        static std::string cached_error;
-        static bool cached_has_update = false;
-        static time_t cached_at = 0;
-        static std::atomic<bool> refreshing(false);
+        static UpdateCheckCache cache;
+        return serveUpdateCheck(
+            cache,
+            "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest",
+            "https://github.com/MetaCubeX/mihomo/releases/latest",
+            [](){ return mihomo_kernel_version; });
+    });
 
-        std::string local = mihomo_kernel_version;
-        std::string latest;
-        std::string error;
-        bool has_update = false;
-        bool stale;
-        {
-            std::lock_guard<std::mutex> lk(cache_mu);
-            latest = cached_latest;
-            error = cached_error;
-            has_update = cached_has_update;
-            stale = (cached_at == 0) || (time(NULL) - cached_at > CACHE_TTL);
-        }
-
-        // cache 过期或从未拉取过:派一个后台线程去刷新。同一时刻只允许一个刷新任务。
-        if(stale && !refreshing.exchange(true))
-        {
-            std::thread([]()
-            {
-                std::string new_latest, new_error;
-                bool new_has = false;
-                try
-                {
-                    // proxy 传空字符串:libcurl 默认会读 HTTPS_PROXY/HTTP_PROXY 环境变量,
-                    // Tauri 端在启动时把 Windows 系统代理注入到进程 env,子进程继承后自动走代理。
-                    // 直连 GitHub 在国内大陆经常超时或几十 KB/s,走代理后秒回。
-                    std::string body = webGet("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", "", 0);
-                    if(body.empty())
-                        new_error = "GitHub API 无响应(网络受限或被防火墙拦截)";
-                    else
-                    {
-                        rapidjson::Document j;
-                        j.Parse(body.data());
-                        if(j.HasParseError() || !j.HasMember("tag_name") || !j["tag_name"].IsString())
-                            new_error = "GitHub API 返回了非预期的内容";
-                        else
-                        {
-                            new_latest = j["tag_name"].GetString();
-                            if(!new_latest.empty() && !mihomo_kernel_version.empty())
-                                new_has = compareKernelVersion(new_latest, mihomo_kernel_version) > 0;
-                        }
-                    }
-                }
-                catch(const std::exception &e) { new_error = std::string("检查失败:") + e.what(); }
-                catch(...) { new_error = "检查失败(未知异常)"; }
-                {
-                    std::lock_guard<std::mutex> lk(cache_mu);
-                    cached_latest = new_latest;
-                    cached_error = new_error;
-                    cached_has_update = new_has;
-                    cached_at = time(NULL);
-                }
-                refreshing.store(false);
-            }).detach();
-        }
-
-        // 第一次请求 cache 还是空,在响应里给个温和提示让前端知道"正在检查"
-        if(latest.empty() && error.empty() && cached_at == 0)
-            error = "正在检查...";
-
-        rapidjson::StringBuffer sb;
-        rapidjson::Writer<rapidjson::StringBuffer> w(sb);
-        w.StartObject();
-        w.Key("local");      w.String(local.data());
-        w.Key("latest");     w.String(latest.data());
-        w.Key("has_update"); w.Bool(has_update);
-        w.Key("release_url"); w.String("https://github.com/MetaCubeX/mihomo/releases/latest");
-        w.Key("error");      w.String(error.data());
-        w.EndObject();
-        return sb.GetString();
+    // 软件自更新:与 mihomo 内核更新对称,前端设置页"软件更新"区直接展示
+    // 本地 vs GitHub 最新版本,不依赖 tauri-plugin-updater 拿 latest tag。
+    append_response("GET", "/checkappupdate", "application/json;charset=utf-8", [](RESPONSE_CALLBACK_ARGS) -> std::string
+    {
+        (void)request;
+        static UpdateCheckCache cache;
+        return serveUpdateCheck(
+            cache,
+            "https://api.github.com/repos/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest",
+            "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest",
+            [](){ return std::string(VERSION); });
     });
 
     std::cerr << "Stair Speedtest " VERSION " Web server running @ http://" << listen_address << ":" << listen_port << std::endl;

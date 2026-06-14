@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { pollGithubReleaseCheck, type GithubReleaseInfo } from "./githubReleaseCheck";
 
 // /checkupdate 接口返回结构(由 webgui_wrapper.cpp 序列化):
 //   - local       本地内核版本(mihomo -v 读出)
@@ -7,13 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 //   - has_update  latest > local 时为 true
 //   - release_url 始终是 GitHub releases 页地址
 //   - error       检查失败时的中文说明,成功时为空
-export type MihomoUpdateInfo = {
-  local: string;
-  latest: string;
-  has_update: boolean;
-  release_url: string;
-  error: string;
-};
+export type MihomoUpdateInfo = GithubReleaseInfo;
 
 export type MihomoInstallResult = {
   success: boolean;
@@ -33,10 +28,6 @@ interface MihomoUpdateStore {
   install: () => Promise<void>;
 }
 
-const PENDING_HINT = "正在检查...";
-const POLL_INTERVAL_MS = 1500;
-const POLL_TIMEOUT_MS = 20000;
-
 export const useMihomoUpdate = create<MihomoUpdateStore>((set, get) => ({
   checking: false,
   installing: false,
@@ -46,21 +37,8 @@ export const useMihomoUpdate = create<MihomoUpdateStore>((set, get) => ({
   async check() {
     if (get().checking) return;
     set({ checking: true, installResult: null });
-    // 后端 /checkupdate 异步刷新:首次访问 cache 未填充时返回 error="正在检查...",
-    // 这是进行中信号而非真错误,前端轮询直到拿到真实结果。
-    const start = Date.now();
-    const poll = async (): Promise<MihomoUpdateInfo> => {
-      const text = await invoke<string>("api_get", { path: "/checkupdate" });
-      const info = JSON.parse(text) as MihomoUpdateInfo;
-      if (info.error === PENDING_HINT && Date.now() - start < POLL_TIMEOUT_MS) {
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-        return poll();
-      }
-      return info;
-    };
     try {
-      const info = await poll();
-      if (info.error === PENDING_HINT) info.error = "";
+      const info = await pollGithubReleaseCheck("/checkupdate");
       set({ info });
     } catch (e) {
       set({

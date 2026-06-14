@@ -94,7 +94,14 @@ static int curlGet(const FetchArgument argument, FetchResult &result)
     curl_handle = curl_easy_init();
     if(argument.proxy.size())
     {
-        if(startsWith(argument.proxy, "cors:"))
+        // sentinel "direct://":显式禁用代理。语义对齐 reqwest 的 .no_proxy(),
+        // 用于"必须查本机真实出口"这类场景(避免 libcurl 默认读 HTTPS_PROXY env
+        // 把请求转给系统代理 → 拿到代理出口 IP 而非本机 IP)。
+        if(argument.proxy == "direct://")
+        {
+            curl_easy_setopt(curl_handle, CURLOPT_NOPROXY, "*");
+        }
+        else if(startsWith(argument.proxy, "cors:"))
         {
             list = curl_slist_append(list, "X-Requested-With: subconverter " VERSION);
             new_url = argument.proxy.substr(5) + argument.url;

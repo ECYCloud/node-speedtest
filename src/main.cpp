@@ -646,12 +646,18 @@ static std::string translateIsp(const std::string &raw)
 // 异步查询本机出口公网 IP 的国家/省/市/运营商，直接调 ip-api.com 中文接口，
 // 与 desktop/src-tauri 保持一致，所有字段中文化。失败时静默返回(footer 自然
 // 跳过对应行)。仅供 PNG footer 展示，不影响测试主流程。
+//
+// 关键:webGet 第二参数传 "direct://" 显式禁用代理。语义跟 desktop 端
+// get_my_ip_info() 的 .no_proxy() 一致。后端进程被 Tauri 启动时继承了
+// HTTPS_PROXY/HTTP_PROXY env(用于自更新走系统代理),libcurl 默认读 env 会
+// 把这查询也转给代理 → ip-api.com 看到的源 IP 是代理出口 → "测试机"显示
+// 成代理节点位置(如美国 加州 洛杉矶 DMIT)。直连才能拿到本机真实出口。
 static void fetchLocalGeoAsync()
 {
     std::thread([](){
         std::string body = webGet(
             "http://ip-api.com/json/?lang=zh-CN&fields=country,regionName,city,isp,status",
-            "", 0);
+            "direct://", 0);
         if(body.empty()) return;
         rapidjson::Document j;
         j.Parse(body.data());
@@ -922,7 +928,12 @@ int singleTest(nodeInfo &node)
     // sleep moved above to right after the proxy switch; no extra wait needed here.
     writeLog(LOG_TYPE_INFO, "Now started fetching GeoIP info...");
     printMsg(SPEEDTEST_MESSAGE_STARTGEOIP, rpcmode, id);
-    node.inboundGeoIP.set(std::async(std::launch::async, [node](){ return getGeoIPInfo(node.server, ""); }));
+    // inboundGeoIP:查节点服务器的 IP 元信息(归属地/ISP),应该用本机直连
+    // api.ip.sb,绝不能走系统代理。Tauri sidecar 进程继承 HTTPS_PROXY env 后
+    // libcurl 默认会读取并转发,导致这次查询绕了一圈代理出口。
+    // outboundGeoIP:查"经过节点出口后看到的 IP",必须走该节点的 SOCKS5,
+    // 这才是节点真实出口归属地。proxy 参数已是 socks5://127.0.0.1:port。
+    node.inboundGeoIP.set(std::async(std::launch::async, [node](){ return getGeoIPInfo(node.server, "direct://"); }));
     node.outboundGeoIP.set(std::async(std::launch::async, [proxy](){ return getGeoIPInfo("", proxy); }));
     if(test_nat_type)
     {
@@ -948,21 +959,20 @@ int singleTest(nodeInfo &node)
     //     resp, err := client.Do(req)                   // 一次 HEAD
     //     t = uint16(time.Since(start) / time.Millisecond)
     //   /delay 内部每次调用都是 "新建拨号 + HEAD 请求",没有连接池复用。
-    //   所以 warmup + 取最小完全无效——warmup 那次连接立刻关掉,后续探测
-    //   各自重新拨号,4 次结果都包含完整握手。
+    //   每次都包含完整握手,所以连续多次采样得到的是同一拨号代价的多次抽样。
     //
-    // 现在改成:所有协议都调一次 mihomo /delay。理由:
-    //   1) 测的就是用户实际拨号一次时的真实总延迟,所有协议口径完全一致
-    //   2) Clash Verge Rev / Karing 都是这样,数字直接可比
-    //   3) 简单,无任何特殊分支
-    //
-    // rawms[] 仍然保留以便前端展示历史多次抽样;现在只用 rawms[0]。
+    // 多次采样取均值:与 SpeedTest++ / NetMonster 等老牌测速工具的"延迟"列对齐。
+    // 单次会被一次握手抖动放大成 +200ms,多次取均值能压住偶发抖动,数字稳定且
+    // 仍跟 Clash Verge / Karing 单次值在同一量级(因为均值就是单次值的期望)。
     const std::string https_probe_url = "https://cp.cloudflare.com/generate_204";
+    static const int LATENCY_PROBE_COUNT = 5;
 
     if(speedtest_mode != "speedonly")
     {
         double latency_ms = -1.0;
         int rawms[10] = {};
+        int success_count = 0;
+        long long sum_ms = 0;
 
         if(node.proxyStr.empty())
         {
@@ -970,18 +980,32 @@ int singleTest(nodeInfo &node)
         }
         else
         {
-            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API...");
-            int ms = 0;
-            if(mihomoMeasureDelay(node.proxyStr, &ms, https_probe_url))
+            writeLog(LOG_TYPE_INFO, "Measuring latency via mihomo /delay API (" + std::to_string(LATENCY_PROBE_COUNT) + " probes)...");
+            for(int i = 0; i < LATENCY_PROBE_COUNT; ++i)
             {
-                rawms[0] = ms;
-                latency_ms = static_cast<double>(ms);
+                int ms = 0;
+                if(mihomoMeasureDelay(node.proxyStr, &ms, https_probe_url))
+                {
+                    rawms[i] = ms;
+                    sum_ms += ms;
+                    ++success_count;
+                }
+                // 失败那次留 rawms[i]=0,前端历史抽样可见;均值只算成功项。
+            }
+
+            if(success_count > 0)
+            {
+                latency_ms = static_cast<double>(sum_ms) / success_count;
+                writeLog(LOG_TYPE_INFO, "mihomo /delay: " + std::to_string(success_count) + "/"
+                         + std::to_string(LATENCY_PROBE_COUNT) + " ok, avg "
+                         + std::to_string(static_cast<int>(latency_ms)) + " ms");
             }
             else
             {
                 // hy2 / anytls 等 QUIC 节点对 mihomo 内置 HEAD 不友好(已在历史
-                // 测试 log 中观察到延迟 0 但下载正常),改走 socks5 自己测一次。
-                writeLog(LOG_TYPE_WARN, "mihomo /delay failed for '" + node.proxyStr + "', trying socks5 HEAD fallback...");
+                // 测试 log 中观察到延迟 0 但下载正常),全部 mihomo 探测都失败时
+                // 改走 socks5 自己测一次兜底。
+                writeLog(LOG_TYPE_WARN, "mihomo /delay all failed for '" + node.proxyStr + "', trying socks5 HEAD fallback...");
                 int fb_ms = 0;
                 if(socks5MeasureDelay(testserver, testport, &fb_ms, https_probe_url))
                 {
@@ -1221,7 +1245,11 @@ void addNodes(std::string link, bool multilink)
         printMsg(SPEEDTEST_MESSAGE_FETCHSUB, rpcmode);
         if(strFind(link, "surge:///install-config")) //surge config link
             link = UrlDecode(getUrlArg(link, "url"));
-        strSub = webGet(link);
+        // 第一次显式 direct:// 直连。Tauri 启动时给 sidecar 注入了 HTTPS_PROXY env
+        // (供"检查更新"走代理),如果这里默认空 proxy,libcurl 会读 env 把订阅请求
+        // 也转给代理,违反"测试相关请求只走本地网络"的约定。墙外订阅(GitHub raw /
+        // 机场域名走 Cloudflare 等)直连失败时,下面 strProxy 兜底再走系统代理一次。
+        strSub = webGet(link, "direct://");
         if(strSub.size() == 0)
         {
             //try to get it again with system proxy

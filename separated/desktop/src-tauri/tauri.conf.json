@@ -34,7 +34,6 @@
     "createUpdaterArtifacts": true,
     "copyright": "MIT",
     "license": "MIT",
-    "licenseFile": "LICENSE",
     "resources": [
       "engine/**/*",
       "LICENSE",

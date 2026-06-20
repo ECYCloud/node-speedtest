@@ -8,8 +8,8 @@ const TEST_MODES = [
 ];
 
 // 后端 export_sort_method 支持: none / speed / rspeed / maxspeed / rmaxspeed / ping / rping。
-// webgui_wrapper.cpp 把这里的 value 转小写后,把 "reverse_" 前缀替换成 "r",所以
-// REVERSE_MAXSPEED → rmaxspeed、MAXSPEED → maxspeed。中间不能再夹下划线,否则替换不出后端识别的 key。
+// webgui_wrapper.cpp 把这里的 value 转小写后，把 "reverse_" 前缀替换成 "r",所以
+// REVERSE_MAXSPEED → rmaxspeed、MAXSPEED → maxspeed。中间不能再夹下划线，否则替换不出后端识别的 key。
 // 默认值是 REVERSE_MAXSPEED(最高速度倒序),与 base/pref.ini 的 export_sort_method=rmaxspeed 一致。
 const SORT_METHODS = [
   { value: "REVERSE_MAXSPEED", label: "最高速度↓" },
@@ -31,9 +31,9 @@ export default function ControlBar() {
 
   // 三态对应三种按钮形态:
   //   running  → "停止"(可点)
-  //   stopping → "停止中"(loader,disabled) — 前端已发停止指令,等待后端 batchTest
+  //   stopping → "停止中"(loader,disabled) — 前端已发停止指令，等待后端 batchTest
   //              真正退出循环并被 polling 拉到。这段时间不切回"开始测试",避免闪烁。
-  //   stopped  → "开始测试"(可点,选中节点 > 0)
+  //   stopped  → "开始测试"(可点，选中节点 > 0)
   const running = status === "running";
   const stopping = status === "stopping";
 

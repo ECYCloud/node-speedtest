@@ -256,17 +256,20 @@ export default function History() {
         >
           结果详情
         </SectionTitle>
-        <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
+        {/* 居中容器换成左上对齐 + 自由滚动:旧版 flex items-center justify-center
+            在原图比容器更大时会上下两端均匀裁切，体感"图片下方被吞了"。
+            现在 overflow-auto 接管溢出，长图也能完整滚动看到。 */}
+        <div className="flex-1 min-h-0 overflow-auto">
           {active && imgData ? (
             <img
               src={imgData}
               alt={active.name}
-              className="max-w-full max-h-full rounded-lg shadow-sm border border-border"
+              className="block w-full h-auto rounded-lg shadow-sm border border-border"
             />
           ) : active ? (
-            <div className="text-fg-muted text-sm">该记录没有图片</div>
+            <div className="h-full flex items-center justify-center text-fg-muted text-sm">该记录没有图片</div>
           ) : (
-            <div className="text-fg-muted text-sm">选择左侧记录查看详情</div>
+            <div className="h-full flex items-center justify-center text-fg-muted text-sm">选择左侧记录查看详情</div>
           )}
         </div>
       </Card>

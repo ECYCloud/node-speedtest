@@ -1,7 +1,7 @@
 // 把图标源(优先 PNG,回退 SVG)渲染为多分辨率 ICO + Tauri 期望的全套 PNG。
 //
-// 输入(自动选择,优先级从高到低):
-//   1. desktop/scripts/icon-source.png   ← 用户提供的原始位图(任意尺寸,推荐 1024+)
+// 输入(自动选择，优先级从高到低):
+//   1. desktop/scripts/icon-source.png   ← 用户提供的原始位图(任意尺寸，推荐 1024+)
 //   2. desktop/scripts/icon-source.svg   ← 矢量回退
 //
 // 用法:
@@ -28,7 +28,7 @@ if (usePng) {
   srcPng = PNG.sync.read(readFileSync(pngPath));
   console.log(`  原图 ${srcPng.width}×${srcPng.height}`);
   srcPng = autoCropSquare(srcPng);
-  console.log(`  裁剪居中后 ${srcPng.width}×${srcPng.height}(去除透明留白,内容最大化)`);
+  console.log(`  裁剪居中后 ${srcPng.width}×${srcPng.height}(去除透明留白，内容最大化)`);
 } else if (existsSync(svgPath)) {
   console.log(`✓ 使用矢量源: icon-source.svg`);
 } else {
@@ -40,9 +40,9 @@ if (usePng) {
 
 const svgBuf = usePng ? null : readFileSync(svgPath);
 
-// 自动裁掉源图四周的透明留白,把图形内容居中放进一个正方形画布。
-// 解决"图标看起来比别的软件小"的问题 —— 根因是源图上下留白过大,内容只占画布
-// 一小块。裁剪后内容填满画布(留极小安全边,避免圆角遮罩切到边缘),视觉上显著放大。
+// 自动裁掉源图四周的透明留白，把图形内容居中放进一个正方形画布。
+// 解决"图标看起来比别的软件小"的问题 —— 根因是源图上下留白过大，内容只占画布
+// 一小块。裁剪后内容填满画布(留极小安全边，避免圆角遮罩切到边缘),视觉上显著放大。
 function autoCropSquare(src) {
   let minX = src.width, minY = src.height, maxX = -1, maxY = -1;
   for (let y = 0; y < src.height; y++) {
@@ -55,7 +55,7 @@ function autoCropSquare(src) {
       }
     }
   }
-  if (maxX < minX || maxY < minY) return src; // 全透明,原样返回
+  if (maxX < minX || maxY < minY) return src; // 全透明，原样返回
   const cw = maxX - minX + 1;
   const ch = maxY - minY + 1;
   // 正方形边长 = 内容较长边 + 3% 安全边距(两侧各 1.5%)
@@ -80,8 +80,8 @@ function autoCropSquare(src) {
 /** 缩放到指定边长(正方形输出)的 PNG buffer */
 function renderPng(size) {
   if (usePng) {
-    // box filter 平均下采样 — 缩小到图标尺寸(32/128/256)质量足够,无需引入 sharp。
-    // 当目标 ≥ 源时退化为 nearest neighbor(放大很少出现,源都是 1024+)。
+    // box filter 平均下采样 — 缩小到图标尺寸(32/128/256)质量足够，无需引入 sharp。
+    // 当目标 ≥ 源时退化为 nearest neighbor(放大很少出现，源都是 1024+)。
     const out = boxFilter(srcPng, size, size);
     return PNG.sync.write({ width: size, height: size, data: out });
   } else {
@@ -93,7 +93,7 @@ function renderPng(size) {
   }
 }
 
-/** Box filter 缩放:把 src 多个像素平均到 dst 一个像素,缩小专用 */
+/** Box filter 缩放:把 src 多个像素平均到 dst 一个像素，缩小专用 */
 function boxFilter(src, dstW, dstH) {
   const dst = Buffer.alloc(dstW * dstH * 4);
   const sx = src.width / dstW;
@@ -159,17 +159,17 @@ console.log(`✓ src/assets/logo.png  (${logoSize}x${logoSize}, ${logoBuf.length
 // DPI-aware 的:在 125%/150%/200% 缩放下控件物理像素会同比放大(最大到 300×114)。
 // MUI2 默认 BITMAP_STRETCH=FitControl,内部走 GDI StretchBlt 把 BMP 拉伸到控件大小,
 // 拉伸用的是最近邻/COLORONCOLOR,放大时极易糊;只有"原图比控件大、做缩小"才清晰。
-// 所以这里直接出 4× = 600×228 的高分辨率 BMP,即使 200% DPI 也是缩小采样,锐利度
+// 所以这里直接出 4× = 600×228 的高分辨率 BMP,即使 200% DPI 也是缩小采样，锐利度
 // 远好于 150×57。本项目通过 installer-hooks.nsh 的 MUI_HEADERIMAGE_RIGHT 把整张
-// BMP 移到 header 右侧,所以图标在画布内右对齐、垂直居中即可。
-// BMP 24-bit 不支持透明,这里把图标 alpha 合成到白底再写出。
+// BMP 移到 header 右侧，所以图标在画布内右对齐、垂直居中即可。
+// BMP 24-bit 不支持透明，这里把图标 alpha 合成到白底再写出。
 writeHeaderBmp();
 
-console.log("\n✓ 全部图标已重新生成,接下来运行 npm run tauri build");
+console.log("\n✓ 全部图标已重新生成，接下来运行 npm run tauri build");
 
 function writeHeaderBmp() {
   // 4× 高分辨率画布。逻辑尺寸仍是 NSIS 推荐的 150×57,SCALE 提升只影响实际像素密度,
-  // 不破坏 MUI2 的 FitControl 拉伸契约(NSIS 只看像素尺寸,不看 DPI 字段)。
+  // 不破坏 MUI2 的 FitControl 拉伸契约(NSIS 只看像素尺寸，不看 DPI 字段)。
   const SCALE = 4;
   const W = 150 * SCALE, H = 57 * SCALE;
   // 图标在 96 DPI 下视觉占 36px(约 header 高度 60%),按 SCALE 放大到 144px。
@@ -201,7 +201,7 @@ function writeHeaderBmp() {
     }
   }
 
-  // 编码为 24-bit BMP(BGR,行自下而上,每行 padding 到 4 字节倍数)
+  // 编码为 24-bit BMP(BGR,行自下而上，每行 padding 到 4 字节倍数)
   const rowBytes = W * 3;
   const rowPadded = (rowBytes + 3) & ~3;
   const padding = rowPadded - rowBytes;
@@ -222,7 +222,7 @@ function writeHeaderBmp() {
   bmp.writeUInt16LE(24, 28);
   bmp.writeUInt32LE(0, 30);          // BI_RGB
   bmp.writeUInt32LE(pixelDataSize, 34);
-  // 物理 DPI = 72 × SCALE,与像素密度一致;NSIS 不读这字段,这里只是元数据正确性
+  // 物理 DPI = 72 × SCALE,与像素密度一致;NSIS 不读这字段，这里只是元数据正确性
   const dpi = Math.round(2835 * SCALE);
   bmp.writeUInt32LE(dpi, 38);
   bmp.writeUInt32LE(dpi, 42);
@@ -246,16 +246,16 @@ function writeHeaderBmp() {
 
 
 /**
- * Lanczos3 高质量缩放(为 header.bmp 用,比 boxFilter 锐利得多)。
+ * Lanczos3 高质量缩放(为 header.bmp 用，比 boxFilter 锐利得多)。
  * 输入: pngjs 解码后的 RGBA 源({width, height, data});输出: RGBA Buffer。
- * 预乘 alpha 处理,避免缩放时边缘出现伪色;最后再反预乘还原 straight alpha。
- * 缩到 56×56 这个尺寸,从 1000+ 像素源开始也能快速跑完(单次 < 1s)。
+ * 预乘 alpha 处理，避免缩放时边缘出现伪色;最后再反预乘还原 straight alpha。
+ * 缩到 56×56 这个尺寸，从 1000+ 像素源开始也能快速跑完(单次 < 1s)。
  */
 function lanczos3Resize(src, dstW, dstH) {
   const a = 3;
   const sx = src.width / dstW;
   const sy = src.height / dstH;
-  // 缩小时滤波核要按缩放比拉伸,否则会产生锯齿
+  // 缩小时滤波核要按缩放比拉伸，否则会产生锯齿
   const fx = Math.max(1, sx);
   const fy = Math.max(1, sy);
   const rx = Math.ceil(a * fx);

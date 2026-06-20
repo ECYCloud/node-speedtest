@@ -13,7 +13,7 @@ export default defineConfig(async () => ({
   // Tauri release 模式下 webview origin 不是 /,资源必须用相对路径
   base: "./",
 
-  // 把 package.json 的 version 注入前端,避免硬编码后忘改
+  // 把 package.json 的 version 注入前端，避免硬编码后忘改
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },

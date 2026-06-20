@@ -63,7 +63,7 @@ void ssrspeed_regenerate_node_list(rapidjson::Document &json)
 
     eraseElements(targetNodes);
 
-    // 防御:请求体缺 configs 或类型不对时直接返回,避免 json["configs"] 访问
+    // 防御:请求体缺 configs 或类型不对时直接返回，避免 json["configs"] 访问
     // 不存在的成员触发 rapidjson RAPIDJSON_ASSERT(本项目重定义为抛异常 → 崩溃)。
     if(!json.IsObject() || !json.HasMember("configs") || !json["configs"].IsArray())
     {
@@ -72,9 +72,9 @@ void ssrspeed_regenerate_node_list(rapidjson::Document &json)
     }
 
     // 单条解析失败不打断整批 —— 任何一条 configs[i] 不是 object、缺 config
-    // 子对象、或 server_port 不是数字时,以前 stoi 直接抛 invalid_argument,
-    // 异常上抛到 detached 线程的顶层 catch 让 batchTest 根本不会执行,前端
-    // 表现为"点开始无反应"。这里收敛到单条:坏数据跳过,好数据继续匹配。
+    // 子对象、或 server_port 不是数字时，以前 stoi 直接抛 invalid_argument,
+    // 异常上抛到 detached 线程的顶层 catch 让 batchTest 根本不会执行，前端
+    // 表现为"点开始无反应"。这里收敛到单条:坏数据跳过，好数据继续匹配。
     auto safePort = [](const std::string &s) -> int {
         try { return s.empty() ? 0 : std::stoi(s); }
         catch(...) { return 0; }
@@ -109,9 +109,9 @@ void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInf
 {
     geoIPInfo inbound = node.inboundGeoIP.get(), outbound = node.outboundGeoIP.get();
     int counter = 0, total = 0;
-    // 安全转换:节点处于测试中间态时这些字段可能为空/非数字,裸 stod 会抛
-    // invalid_argument 异常 —— /getresults 在 web 线程里调用,异常会让该线程崩溃。
-    // 用带默认值的解析兜住,异常值一律按 0 处理。
+    // 安全转换:节点处于测试中间态时这些字段可能为空/非数字，裸 stod 会抛
+    // invalid_argument 异常 —— /getresults 在 web 线程里调用，异常会让该线程崩溃。
+    // 用带默认值的解析兜住，异常值一律按 0 处理。
     auto safeD = [](const std::string &s) -> double {
         try { return s.empty() ? 0.0 : std::stod(s); }
         catch(...) { return 0.0; }
@@ -187,6 +187,12 @@ void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInf
     writer.Double(ssrspeed_get_speed_number(node.maxSpeed));
     writer.Key("trafficUsed");
     writer.Int(node.totalRecvBytes);
+    // UDP 支持等级:STUN / RFC 3489 检测出的 NAT 类型，前端结果表"UDP"列展示。
+    // 字段值是 ntt.cpp NAT_TYPE_STR 中的英文枚举(FullCone / RestrictedCone /
+    // PortRestrictedCone / Symmetric / Blocked / Unknown),前端再映射成中文。
+    // 与历史记录 PNG 渲染走同一份数据源，语义一致。
+    writer.Key("natType");
+    writer.String(node.natType.get().data());
 }
 
 std::string ssrspeed_generate_results(std::vector<nodeInfo> &nodes)
@@ -248,7 +254,7 @@ std::string ssrspeed_generate_web_configs(std::vector<nodeInfo> &nodes)
     {
         writer.StartObject();
         // 协议类型直接用内核回填的 proxy_type 字符串(Vless / Trojan / Hysteria2 …)。
-        // 原本的 linkType switch 在协议重构后所有协议分支已成死代码,这里改为
+        // 原本的 linkType switch 在协议重构后所有协议分支已成死代码，这里改为
         // "内核怎么报就怎么传给前端",新协议跟着 mihomo 自动支持。
         writer.Key("type");
         writer.String((x.proxy_type.empty() ? std::string("Unknown") : x.proxy_type).data());
@@ -270,7 +276,7 @@ std::string ssrspeed_generate_web_configs(std::vector<nodeInfo> &nodes)
 }
 
 // 通用 GitHub /releases/latest 检查 - mihomo 内核与软件自身两个 /check*update
-// 路由共享同一套缓存 + 异步刷新 + 系统代理逻辑,这里集中实现避免重复一份。
+// 路由共享同一套缓存 + 异步刷新 + 系统代理逻辑，这里集中实现避免重复一份。
 struct UpdateCheckCache
 {
     std::mutex mu;
@@ -314,7 +320,7 @@ static std::string serveUpdateCheck(UpdateCheckCache &cache,
             {
                 // proxy 传空:libcurl 自动读 HTTPS_PROXY/HTTP_PROXY 环境变量。
                 // Tauri 启动时把 Windows 系统代理注入进程 env,直连 GitHub 在国内
-                // 经常超时,走代理后秒回。
+                // 经常超时，走代理后秒回。
                 std::string body = webGet(api_url, "", 0);
                 if(body.empty())
                     new_error = "GitHub API 无响应(网络受限或被防火墙拦截)";
@@ -346,7 +352,7 @@ static std::string serveUpdateCheck(UpdateCheckCache &cache,
         }).detach();
     }
 
-    // 第一次访问 cache 还空,给前端温和的"正在检查"信号让其轮询。
+    // 第一次访问 cache 还空，给前端温和的"正在检查"信号让其轮询。
     if(latest.empty() && error.empty() && at == 0)
         error = "正在检查...";
 
@@ -368,7 +374,7 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
     // listener_args: { addr, port, listen_backlog, worker_threads }
     //
     // worker_threads = 16:每个 worker 是独立 event_base 跑事件循环。订阅下载 /
-    // mihomo 启动会同步阻塞 1 个 worker 5-30 秒,worker 越多,被全占的概率越低。
+    // mihomo 启动会同步阻塞 1 个 worker 5-30 秒,worker 越多，被全占的概率越低。
     // 旧值 4 在用户连点"加载订阅"时存在 worker 全占 → /getversion 排队 timeout
     // → 前端"后端未连接"的潜在风险。16 worker 实测内存增量 < 100KB,idle CPU 0,
     // 容量提到 4 倍后正常使用场景下不可能被全占。
@@ -424,7 +430,7 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         eraseElements(allNodes);
         if(start_flag)
             return "running";
-        // 协议重构后引擎不再解析 SS/SSR/v2rayN/SSD 等格式,本地配置导入仅支持
+        // 协议重构后引擎不再解析 SS/SSR/v2rayN/SSD 等格式，本地配置导入仅支持
         // Clash YAML / base64 分享链接列表 / 单条分享链接(由 loadSubscription 识别)。
         // 0 节点 = 文件无法识别为上述任一形态。
         if(loadSubscription(getFormData(request.postdata), override_conf_port, allNodes) == 0)
@@ -447,12 +453,12 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         std::thread t([=]()
         {
             start_flag = true;
-            // 复位上一轮残留的中断信号,确保新一轮 batchTest 不会在第一节点就被 break。
+            // 复位上一轮残留的中断信号，确保新一轮 batchTest 不会在第一节点就被 break。
             stop_requested = false;
             // 顶层兜底:测速链路里任何一步抛异常(尤其 rapidjson 的 RAPIDJSON_ASSERT
             // 被重定义为 throw runtime_error —— GeoIP/内核返回非预期 JSON 时会触发),
-            // 若不捕获就会让这个 detached 线程 terminate 掉整个后端进程,表现为"无法测试"。
-            // 这里统一兜住:保证 start_flag 复位、后端存活,单个节点失败不影响整体。
+            // 若不捕获就会让这个 detached 线程 terminate 掉整个后端进程，表现为"无法测试"。
+            // 这里统一兜住:保证 start_flag 复位、后端存活，单个节点失败不影响整体。
             try
             {
                 rapidjson::Document json;
@@ -489,8 +495,8 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
     });
 
     // 节点级停止:置 stop_requested = true,batchTest 当前节点跑完后跳出循环。
-    // 同时把 done_time 清零,避免 /start 的"5 秒冷却"误挡停止后立刻重测。
-    // 不杀后端进程 —— allNodes/targetNodes/mihomo outbound 全保留,再点开始可无缝继续。
+    // 同时把 done_time 清零，避免 /start 的"5 秒冷却"误挡停止后立刻重测。
+    // 不杀后端进程 —— allNodes/targetNodes/mihomo outbound 全保留，再点开始可无缝继续。
     append_response("POST", "/stop", "text/plain", [](RESPONSE_CALLBACK_ARGS) -> std::string
     {
         (void)request;
@@ -522,8 +528,8 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
             [](){ return mihomo_kernel_version; });
     });
 
-    // 软件自更新:与 mihomo 内核更新对称,前端设置页"软件更新"区直接展示
-    // 本地 vs GitHub 最新版本,不依赖 tauri-plugin-updater 拿 latest tag。
+    // 软件自更新:与 mihomo 内核更新对称，前端设置页"软件更新"区直接展示
+    // 本地 vs GitHub 最新版本，不依赖 tauri-plugin-updater 拿 latest tag。
     append_response("GET", "/checkappupdate", "application/json;charset=utf-8", [](RESPONSE_CALLBACK_ARGS) -> std::string
     {
         (void)request;

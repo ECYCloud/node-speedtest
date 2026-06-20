@@ -88,6 +88,11 @@ export interface NodeResult {
   /** 最高瞬时速度，字节/秒;后端 webgui_wrapper.json_write_node 写入。 */
   dspeedMax: number;
   trafficUsed: number;
+  /** UDP 支持等级原始枚举:来自 STUN(RFC 3489) 检测，值为
+   *  FullCone / RestrictedCone / PortRestrictedCone / Symmetric / Blocked / Unknown。
+   *  pref.ini 的 test_nat_type=false 或 STUN 失败时为 "Unknown"。前端用 udpLevelLabel()
+   *  把它映射成中文展示。 */
+  natType?: string;
 }
 
 export interface ResultsPayload {
@@ -113,7 +118,7 @@ export const api = {
   start: (params: StartParams) =>
     apiPostJson<string>("/start", params, false),
   // 节点级停止:后端把 stop_requested 置 true,batchTest 当前节点跑完后跳出循环。
-  // 不杀后端进程,allNodes/targetNodes 全程保留,再点开始可无缝继续。
+  // 不杀后端进程,allNodes/targetNodes 全程保留，再点开始可无缝继续。
   stop: () => apiPostJson<string>("/stop", {}, false),
   results: () => apiGet<ResultsPayload>("/getresults"),
 };

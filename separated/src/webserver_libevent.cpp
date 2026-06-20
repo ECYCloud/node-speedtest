@@ -100,6 +100,39 @@ string_map redirect_map;
 
 const char *request_header_blacklist[] = {"host", "accept", "accept-encoding"};
 
+// 受信 Origin 白名单:仅放行 Tauri webview / Vite dev server 自身的来源。
+// reqwest(Rust 主进程→sidecar)等非浏览器客户端不带 Origin 头，命中
+// Origin==NULL 分支返回 nullptr，跳过 ACAO，浏览器同源策略不会受影响。
+// 浏览器跨域调本地 127.0.0.1:10870 时 Origin 不在白名单 → 不发 ACAO →
+// 响应被浏览器拦截，杜绝 CSRF。
+static const char *pickAllowedOrigin(evhttp_request *req)
+{
+    const char *origin = evhttp_find_header(req->input_headers, "Origin");
+    if(!origin || !*origin)
+        return nullptr;
+    static const char *whitelist[] = {
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "http://localhost:1420",
+    };
+    for(const char *w : whitelist)
+        if(strcmp(origin, w) == 0)
+            return w;
+    return nullptr;
+}
+
+// 统一加 ACAO + Vary: Origin。给定 Origin 在白名单返回时回写它本身(精确回显
+// 比 * 更安全也满足 credentials 模式)；否则不发 ACAO 头。
+static void addCorsHeaders(evhttp_request *req)
+{
+    const char *allow = pickAllowedOrigin(req);
+    if(allow)
+        evhttp_add_header(req->output_headers, "Access-Control-Allow-Origin", allow);
+    // Vary 始终发，避免缓存对不同 Origin 串味
+    evhttp_add_header(req->output_headers, "Vary", "Origin");
+}
+
 static inline void buffer_cleanup(struct evbuffer *eb)
 {
     (void)eb;
@@ -158,18 +191,18 @@ static inline int process_request(Request &request, Response &response, std::str
     return -1;
 }
 
-// OnReq 处理逻辑的实际实现,被外层 OnReq 包一层 try/catch 后调用
+// OnReq 处理逻辑的实际实现，被外层 OnReq 包一层 try/catch 后调用
 static void OnReq_impl(evhttp_request *req);
 
 void OnReq(evhttp_request *req, void *args)
 {
     (void)args;
-    // 顶层兜底:libevent 的 event_base_dispatch 是 C 风格回调,如果 handler lambda
+    // 顶层兜底:libevent 的 event_base_dispatch 是 C 风格回调，如果 handler lambda
     // 里抛 std::exception(rapidjson 解析失败 / std::stoi 溢出 / 文件 IO 异常等)
     // 而又没有就地 catch,异常会穿过这个 C 边界 = std::terminate,worker 线程
     // 死掉甚至整个后端 abort,4 个 worker 死光后 webserver hang,前端"后端未连接"。
-    // 这里把整个 OnReq 包起来:任何 handler 抛异常都被吞,改成 500 + 错误 body
-    // 返回给前端,worker 线程不死,后端整体存活。日志里记录详情供排查。
+    // 这里把整个 OnReq 包起来:任何 handler 抛异常都被吞，改成 500 + 错误 body
+    // 返回给前端,worker 线程不死，后端整体存活。日志里记录详情供排查。
     try
     {
         OnReq_impl(req);
@@ -181,7 +214,7 @@ void OnReq(evhttp_request *req, void *args)
         auto *OutBuf = evhttp_request_get_output_buffer(req);
         if(OutBuf)
         {
-            evhttp_add_header(req->output_headers, "Access-Control-Allow-Origin", "*");
+            addCorsHeaders(req);
             evhttp_add_header(req->output_headers, "Content-Type", "text/plain;charset=utf-8");
             evbuffer_add(OutBuf, body.data(), body.size());
             evhttp_send_reply(req, HTTP_INTERNAL, "", OutBuf);
@@ -258,7 +291,11 @@ static void OnReq_impl(evhttp_request *req)
     switch(retVal)
     {
     case 1: //found OPTIONS
-        evhttp_add_header(req->output_headers, "Access-Control-Allow-Origin", "*");
+        addCorsHeaders(req);
+        // Allow-Headers 也只在白名单 Origin 命中时才下发(addCorsHeaders 内
+        // pickAllowedOrigin 已经处理过)。这里给 OPTIONS 回个常用集合即可，
+        // 用 * 是合规的(简单请求 Allow-Headers: * 在 W3C CORS 现行规范
+        // 下被广泛接受)。
         evhttp_add_header(req->output_headers, "Access-Control-Allow-Headers", "*");
         evhttp_send_reply(req, response.status_code, "", NULL);
         break;
@@ -275,9 +312,9 @@ static void OnReq_impl(evhttp_request *req)
             else
                 evhttp_add_header(req->output_headers, "Content-Type", content_type.c_str());
         }
-        evhttp_add_header(req->output_headers, "Access-Control-Allow-Origin", "*");
-        // 不再强制 Connection: close。原先每个响应都关连接,前端短连接洪流让
-        // Windows ephemeral port 进 TIME_WAIT 60s 不释放,大量 invoke 时偶发本地
+        addCorsHeaders(req);
+        // 不再强制 Connection: close。原先每个响应都关连接，前端短连接洪流让
+        // Windows ephemeral port 进 TIME_WAIT 60s 不释放，大量 invoke 时偶发本地
         // 端口分配失败 → reqwest 报错 → 前端"后端未连接"。libevent 默认遵循
         // HTTP/1.1 keep-alive,Rust 端 reqwest 也启用了 pool_idle_timeout,二者
         // 配合后,/getversion 等高频轮询走的是同一条 TCP,稳定性显著提升。

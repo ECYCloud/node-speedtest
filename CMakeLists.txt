@@ -8,9 +8,32 @@ ENDIF()
 SET(CMAKE_CXX_STANDARD 17)
 ADD_DEFINITIONS(-Wall -Wextra -Wno-unused-parameter -Wno-unused-result)
 
-# 桌面端 sidecar 引擎模式:加入 separated/src/ 的 HTTP 服务源文件,链接 libevent。
-# 默认 OFF —— 主项目仍是纯 CLI 二进制,与本目录无任何依赖关系。
+# 桌面端 sidecar 引擎模式:加入 separated/src/ 的 HTTP 服务源文件，链接 libevent。
+# 默认 OFF —— 主项目仍是纯 CLI 二进制，与本目录无任何依赖关系。
 OPTION(BUILD_WEBSERVER_ENGINE "Build the /web sidecar engine for the Tauri desktop app (depends on libevent)" OFF)
+
+# ---- 安全硬化(GCC / Clang)---------------------------------------------------
+# 项目历史出过 CVE 的库(OpenSSL / PCRE2 / libpng / yaml-cpp 等)被静态/动态链
+# 进二进制，单纯靠 -Wall 接不住缓冲区溢出 / UAF 类问题。这里加运行时硬化：
+#   -fstack-protector-strong  栈金丝雀
+#   -D_FORTIFY_SOURCE=2       libc 检测越界(配合 -O 才生效，所以放在 Release 上)
+#   -fno-strict-aliasing      避免依赖严格别名规则的优化 UB(项目里多处 reinterpret_cast)
+# 链接器:
+#   -Wl,--dynamicbase --high-entropy-va --nxcompat   PE ASLR/DEP 标记
+#   -Wl,-z,relro -Wl,-z,now                          ELF 立刻绑定 + 只读 GOT
+# Linux/macOS 才发 -fPIE -pie;MinGW 不需要(PE 走 --dynamicbase)
+IF(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    ADD_COMPILE_OPTIONS(-fstack-protector-strong -fno-strict-aliasing)
+    # _FORTIFY_SOURCE 只在 -O1+ 下有意义;Release 默认 -O3，OK
+    ADD_COMPILE_DEFINITIONS($<$<NOT:$<CONFIG:Debug>>:_FORTIFY_SOURCE=2>)
+    IF(WIN32)
+        ADD_LINK_OPTIONS(-Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
+    ELSE()
+        ADD_COMPILE_OPTIONS(-fPIE)
+        ADD_LINK_OPTIONS(-pie -Wl,-z,relro -Wl,-z,now)
+    ENDIF()
+ENDIF()
+# ---- 安全硬化 end -----------------------------------------------------------
 
 INCLUDE(CheckCXXSourceCompiles)
 CHECK_CXX_SOURCE_COMPILES(

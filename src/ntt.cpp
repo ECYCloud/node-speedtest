@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <random>
+#include <vector>
 
 #include "socket.h"
 #include "misc.h"
@@ -263,35 +264,79 @@ STUN_RESPONSE get_stun_response_thru_socks5(SOCKET udp_s, const std::string &ser
 
 std::string get_nat_type_thru_socks5(const std::string &server, uint16_t port, const std::string &username, const std::string &password, const std::string &stun_server, uint16_t stun_port)
 {
-    writeLog(LOG_TYPE_STUN, "STUN on SOCKS5 server " + server + ":" + std::to_string(port) + " started. Using STUN server " + stun_server + ":" + std::to_string(stun_port) + ".");
+    // STUN 服务器候选列表。RFC 3489 NAT 类型探测对所选 STUN 服务器的可达
+    // 性高度敏感:节点出口若访问不到首选 STUN(典型如 Google Anycast 在某些
+    // 机房被劫持),旧实现会直接判定 UDP_BLOCKED,实际节点 UDP 可能完全正常。
+    // 这里按"任一可达即用"策略，顺序探 Test 1,首个能拿回 MAPPED_ADDRESS 的
+    // 服务器作为剩余 Test 2/3 的基准(不能跨服务器混用，因为 CHANGED_ADDRESS
+    // 与 ext_ip/ext_port 必须出自同一台 STUN)。
+    //
+    // 候选选择标准:支持 RFC 3489 CHANGED_ADDRESS 属性(否则 Test 2 永远拿不
+    // 到响应，会被误判 Symmetric)。Google / Cloudflare / Voipgate 都满足。
+    struct StunCand { const char *host; uint16_t port; };
+    static const StunCand kFallback[] = {
+        {"stun.l.google.com",        19302},
+        {"stun1.l.google.com",       19302},
+        {"stun.cloudflare.com",      3478},
+        {"stun.voipgate.com",        3478},
+        {"stun.miwifi.com",          3478},
+    };
+
+    writeLog(LOG_TYPE_STUN, "STUN on SOCKS5 server " + server + ":" + std::to_string(port) + " started.");
     SOCKET s = initSocket(AF_INET, SOCK_STREAM, 0), udp_s = initSocket(AF_INET, SOCK_DGRAM, 0);
     defer(closesocket(s); closesocket(udp_s);)
-    STUN_RESPONSE response;
     uint16_t self_port, udp_port;
     std::tie(self_port, udp_port) = socks5_init_udp(s, udp_s, server, port, username, password);
     if(udp_port == 0)
     {
-        writeLog(LOG_TYPE_STUN, "Failed to start UDP Association with SOCKS5 server. Leaving...");
+        // 区分 UDP ASSOCIATE 失败 vs STUN 不可达:前者表示节点协议本身不
+        // 承载 UDP(SS 仅 TCP / 中转节点关 UDP),用 Unknown 体现"测不出来";
+        // 后者(下面会到的)用 Blocked 体现"UDP 通了但出口去不到 STUN"。
+        writeLog(LOG_TYPE_STUN, "Failed to start UDP Association with SOCKS5 server (proxy may not support UDP relay).");
         return NAT_TYPE_STR[UNKNOWN];
     }
-    writeLog(LOG_TYPE_STUN, "Trying STUN Test 1.");
-    response = get_stun_response_thru_socks5(udp_s, server, udp_port, stun_server, stun_port);
-    //check open internet or udp blocked, skip for now
-    if(response.failed)
+
+    // 带主调用者指定的 stun_server/stun_port 作为最优先候选，内置候选随后兜底。
+    std::vector<StunCand> cands;
+    if(!stun_server.empty())
+        cands.push_back({stun_server.c_str(), stun_port});
+    for(const auto &c : kFallback)
+        cands.push_back(c);
+
+    STUN_RESPONSE response;
+    const char *picked_host = nullptr;
+    uint16_t picked_port = 0;
+    for(const auto &c : cands)
     {
-        //std::cout<<"blocked"<<std::endl;
-        writeLog(LOG_TYPE_STUN, "STUN Test 1 failed to get response. NAT type: UDP Blocked.");
+        writeLog(LOG_TYPE_STUN, "Trying STUN Test 1 against " + std::string(c.host) + ":" + std::to_string(c.port));
+        response = get_stun_response_thru_socks5(udp_s, server, udp_port, c.host, c.port);
+        if(!response.failed)
+        {
+            picked_host = c.host;
+            picked_port = c.port;
+            break;
+        }
+        writeLog(LOG_TYPE_STUN, "STUN Test 1 failed against " + std::string(c.host) + ", trying next candidate.");
+    }
+    if(picked_host == nullptr)
+    {
+        // 所有 STUN 服务器都拿不到响应:UDP 出口要么被中间网络丢，要么节点
+        // 出口被运营商屏蔽到这些常见 STUN。归类 Blocked 与 RFC 3489 语义
+        // 一致(UDP transport blocked or restricted)。
+        writeLog(LOG_TYPE_STUN, "All STUN candidates failed Test 1. NAT type: UDP Blocked.");
         return NAT_TYPE_STR[UDP_BLOCKED];
     }
-    writeLog(LOG_TYPE_STUN, "Public end: " + response.ext_ip + ":" + std::to_string(response.ext_port));
+    writeLog(LOG_TYPE_STUN, "Public end: " + response.ext_ip + ":" + std::to_string(response.ext_port) + " (via " + picked_host + ")");
+
+    // 后续 Test 2/3 必须用同一台 STUN —— CHANGED_ADDRESS 与 ext_ip/ext_port
+    // 都是这一台返回的，跨服务器对比无意义。
     std::string change_ip = response.change_ip, ext_ip = response.ext_ip, send_data;
     uint16_t change_port = response.change_port, ext_port = response.ext_port;
     send_data.assign((char*)CHANGE_REQUEST_IPPORT, 8);
     writeLog(LOG_TYPE_STUN, "STUN Test 1 passed. Trying STUN Test 2.");
-    response = get_stun_response_thru_socks5(udp_s, server, udp_port, stun_server, stun_port, send_data);
+    response = get_stun_response_thru_socks5(udp_s, server, udp_port, picked_host, picked_port, send_data);
     if(!response.failed)
     {
-        //std::cout<<"full cone"<<std::endl;
         writeLog(LOG_TYPE_STUN, "STUN Test 2 passed. NAT type: Full Cone NAT.");
         return NAT_TYPE_STR[FULL_CONE_NAT];
     }
@@ -305,7 +350,6 @@ std::string get_nat_type_thru_socks5(const std::string &server, uint16_t port, c
     writeLog(LOG_TYPE_STUN, "Public end: " + response.ext_ip + ":" + std::to_string(response.ext_port));
     if(response.ext_ip != ext_ip || response.ext_port != ext_port)
     {
-        //std::cout<<"symmetric"<<std::endl;
         writeLog(LOG_TYPE_STUN, "STUN Test 1 with CHANGED_IP returned different SRC_IP/SRC_PORT. NAT type: Symmetric NAT.");
         return NAT_TYPE_STR[SYMMETRIC_NAT];
     }
@@ -314,11 +358,9 @@ std::string get_nat_type_thru_socks5(const std::string &server, uint16_t port, c
     response = get_stun_response_thru_socks5(udp_s, server, udp_port, change_ip, change_port, send_data);
     if(response.failed)
     {
-        //std::cout<<"port restricted"<<std::endl;
         writeLog(LOG_TYPE_STUN, "STUN Test 3 with CHANGED_IP failed to get response. NAT type: Port Restricted Cone NAT.");
         return NAT_TYPE_STR[PORT_RESTRICTED_CONE_NAT];
     }
-    //std::cout<<"stun: restricted cone"<<std::endl;
     writeLog(LOG_TYPE_STUN, "STUN Test 3 with CHANGED_IP passed. NAT type: Restricted Cone NAT.");
     return NAT_TYPE_STR[RESTRICTED_CONE_NAT];
 }

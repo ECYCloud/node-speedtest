@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import { api, NodeConfig, NodeResult, StartParams } from "../lib/api";
 
 /** 后端在解析失败时可能返回 type=Unknown 且没有 config 字段的占位项，
@@ -20,7 +21,7 @@ function sanitizeConfigs(list: unknown): NodeConfig[] {
 /** 测试状态机:
     - "stopped"  完全空闲(初始/批次结束/手动停止已落地)
     - "running"  后端正在跑节点
-    - "stopping" 用户已点停止,但后端 batchTest detached thread 还没真退出
+    - "stopping" 用户已点停止，但后端 batchTest detached thread 还没真退出
                  (下载累积循环要 ~500ms 才检查 stop_requested,polling 也要 ~1.2s
                  才能拉到后端 start_flag=false)。这段过渡期前端按钮锁在"停止中",
                  polling 拿到的 status=running 不允许覆盖回去 — 否则会出现
@@ -128,7 +129,6 @@ export const useTest = create<TestStore>((set, get) => ({
   async loadFileByPath(path) {
     set({ loadingConfigs: true, error: null });
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
       // Rust 端读文件 + multipart 上传后端，返回节点 JSON 文本(或 "error"/"running")
       const text = await invoke<string>("import_config_file", { path });
       const trimmed = (text ?? "").trim();
@@ -204,13 +204,13 @@ export const useTest = create<TestStore>((set, get) => ({
     }
   },
 
-  /** 停止测试:发 POST /stop,后端在 batchTest 节点循环间检测到 stop_requested 后跳出,
+  /** 停止测试:发 POST /stop,后端在 batchTest 节点循环间检测到 stop_requested 后跳出，
       保留 allNodes/targetNodes,用户可立即点"开始"重测同一份订阅。
-      旧实现走 Tauri 命令 restart_backend 杀后端进程,会清空内存里的节点列表 →
-      再点开始 0 节点,表现为"任何节点都无法测试"。
+      旧实现走 Tauri 命令 restart_backend 杀后端进程，会清空内存里的节点列表 →
+      再点开始 0 节点，表现为"任何节点都无法测试"。
 
       状态过渡:running → stopping(立即) → stopped(由 refreshOnce 拉到后端 stopped 时切)。
-      不能直接 set stopped,否则 polling 在中间窗口拉到后端仍 running 会把 status 倒回去,
+      不能直接 set stopped,否则 polling 在中间窗口拉到后端仍 running 会把 status 倒回去，
       表现为按钮"开始测速→停止→开始测速"闪烁。 */
   async stopTest() {
     if (get().status !== "running") return;
@@ -245,7 +245,7 @@ export const useTest = create<TestStore>((set, get) => ({
         cur_status === "stopping"
           ? r.status === "stopped" ? "stopped" : "stopping"
           : r.status;
-      // stopping 过渡期不刷新 current —— 保持停止瞬间的"已完成"语义,避免
+      // stopping 过渡期不刷新 current —— 保持停止瞬间的"已完成"语义，避免
       // 又出现一个正在测试的节点卡片闪一下。
       const next_current = cur_status === "stopping" ? null : cur;
       set({ status: next_status, results: [...map.values()], current: next_current });
@@ -260,7 +260,7 @@ export function startPolling(intervalMs = 500) {
   // 500ms 与后端 perform_test 累积循环 sleep(500) 完全对齐:后端每 0.5s 写一格
   // rawSpeed 并刷新 maxSpeed/avgSpeed,前端按同频率拉就不会漏掉任何窗口快照,
   // 用户观察到的"实时速度峰值"严格等于后端记录的"最高速度"。
-  // 旧值 1200ms 会让前端只看到后端 ~一半的窗口,峰值若落在 polling 间隙就会
+  // 旧值 1200ms 会让前端只看到后端 ~一半的窗口，峰值若落在 polling 间隙就会
   // 永远看不到 → 体感"最高速度比观察到的实时峰值高几个百分点"。
   // 后端 /getresults 是本地 HTTP,~kB 级响应,500ms 频率没压力。
   if (polling) return;

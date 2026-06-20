@@ -2,7 +2,7 @@ import { Button, Card, SectionTitle } from "../components/ui";
 import { RefreshCw, Monitor, Download, ExternalLink, CheckCircle2, AlertCircle, PackageCheck, Sparkles, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppUpdate } from "../store/appUpdate";
 import { useMihomoUpdate } from "../store/mihomoUpdate";
 
@@ -16,8 +16,8 @@ type ClearAppDataResult = {
 };
 
 // 应用自更新与 mihomo 内核更新的状态机均搬到 src/store/{appUpdate,mihomoUpdate}.ts:
-// 用户离开设置页(组件 unmount)时,局部 useState 会销毁导致进度/检查中态丢失。
-// 现在状态由 zustand 持有,跨页面切换无缝继续。
+// 用户离开设置页(组件 unmount)时，局部 useState 会销毁导致进度/检查中态丢失。
+// 现在状态由 zustand 持有，跨页面切换无缝继续。
 
 const APP_RELEASE_URL = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest";
 
@@ -30,7 +30,7 @@ function formatBytes(n: number): string {
 
 export default function SettingsPage() {
   const [restarting, setRestarting] = useState(false);
-  // 应用自更新状态由全局 zustand store 持有,避免离开设置页时下载进度丢失
+  // 应用自更新状态由全局 zustand store 持有，避免离开设置页时下载进度丢失
   const appUpdate = useAppUpdate((s) => s.state);
   const checkUpdateApp = useAppUpdate((s) => s.check);
   const installUpdateApp = useAppUpdate((s) => s.install);
@@ -41,7 +41,19 @@ export default function SettingsPage() {
   const installResult = useMihomoUpdate((s) => s.installResult);
   const checkUpdate = useMihomoUpdate((s) => s.check);
   const installUpdate = useMihomoUpdate((s) => s.install);
-  // 二次确认对话框开关:第一次点"清理应用数据"只展开警告,第二次点确认才真正执行
+  const resetAppUpdate = useAppUpdate((s) => s.reset);
+  const resetMihomoUpdate = useMihomoUpdate((s) => s.reset);
+  // 离开设置页时清掉两个更新区的展示性终态(none/error/已是最新),否则下次
+  // 打开会先闪一下旧的"已是最新版本",等真去查时才跳到"有新版本",误导用户。
+  // store 里的 reset 自己做了进行中保护:checking/downloading/installing/available
+  // 一律保留,让后台下载继续推进，这正是当初把状态从 useState 搬到 zustand 的目的。
+  useEffect(() => {
+    return () => {
+      resetAppUpdate();
+      resetMihomoUpdate();
+    };
+  }, [resetAppUpdate, resetMihomoUpdate]);
+  // 二次确认对话框开关:第一次点"清理应用数据"只展开警告，第二次点确认才真正执行
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
@@ -58,9 +70,9 @@ export default function SettingsPage() {
   // 用户在二次确认对话框点"确认清理"才会进入这里:
   // 1. 调 clear_app_data 让 Rust 停后端 + 删 engine 目录
   // 2. Rust 端清理完成后会延迟 300ms 自行触发 app.restart() 重启进程,
-  //    前端这里只需保持"清理中"状态等被打断即可,不需要也不能调 window.close()
+  //    前端这里只需保持"清理中"状态等被打断即可，不需要也不能调 window.close()
   //    (后者会被 capabilities 默认 ACL 拒掉)
-  // 3. 失败把 errors 显示出来,不重启应用,方便排查
+  // 3. 失败把 errors 显示出来，不重启应用，方便排查
   async function clearAppData() {
     setClearing(true);
     setClearError(null);
@@ -107,7 +119,7 @@ export default function SettingsPage() {
               本地 <code className="text-xs">v{appUpdate.current}</code>
               {/* none 分支的 latest 来自后端 /checkappupdate(打 GitHub releases),
                   available/downloading 来自 plugin-updater。GitHub 不可达时 none.latest
-                  为空串,此时只显示本地版本,不渲染"· 最新"以免出现"最新 v"的尾巴。 */}
+                  为空串，此时只显示本地版本，不渲染"· 最新"以免出现"最新 v"的尾巴。 */}
               {((appUpdate.kind === "available" || appUpdate.kind === "downloading") ||
                 (appUpdate.kind === "none" && appUpdate.latest)) && (
                 <>

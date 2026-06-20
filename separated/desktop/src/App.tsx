@@ -79,7 +79,7 @@ function Sidebar({
           </button>
         ))}
       </nav>
-      {/* 底部:左侧版本号纯展示,不触发任何弹窗;右侧"关于"按钮(图标+文字)
+      {/* 底部:左侧版本号纯展示，不触发任何弹窗;右侧"关于"按钮(图标+文字)
           打开 AboutDialog,内含开源声明与仓库链接。 */}
       <div className="mt-auto px-3 py-3 flex items-center gap-1">
         <div className="flex-1 inline-flex items-center gap-2 px-3 h-8 text-xs text-fg-muted">

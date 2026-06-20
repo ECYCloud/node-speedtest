@@ -24,11 +24,14 @@ std::mutex cache_rw_lock;
 
 // UA used for all outbound HTTP(S) requests, most importantly subscription
 // fetching: many airports return a Clash/mihomo YAML only when the UA looks
-// like a Clash client. Format: "Clash mihomo/<kernel-version> stairspeedtest-reborn".
-// main() overrides this at startup with the REAL kernel version queried from
-// the bundled mihomo binary (see buildUserAgent()); this is just the default.
+// like a Clash client. Format:
+//   "stairspeedtest-reborn/<X.Y.Z> Clash mihomo/<kernel-version>"
+// 软件版本在前(便于服务端识别本程序),Clash 内核标识在后(机场识别 Clash 客户端
+// 凭 'Clash' / 'mihomo' 关键字，位置无所谓)。VERSION 宏带有 'v' 前缀,UA 软件版本
+// 段约定按 PRODUCT/X.Y.Z 习惯不带 v,故拼接时跳过首字符 'v'。
+// main() 启动时会用 initUserAgent() 用真实内核版本覆盖此默认值。
 std::string user_agent_str =
-    "Clash mihomo/" MIHOMO_FALLBACK_VERSION " stairspeedtest-reborn";
+    "stairspeedtest-reborn/" VERSION_NO_V " Clash mihomo/" MIHOMO_FALLBACK_VERSION;
 
 static inline void curl_init()
 {
@@ -63,6 +66,28 @@ static int size_checker(void *clientp, curl_off_t dltotal, curl_off_t dlnow, cur
     return 0;
 }
 
+// 解析 cacert.pem 的绝对路径供 CURLOPT_CAINFO 使用。
+// 顺序:运行目录 → 可执行文件所在目录 → tools/misc/。命中第一个就锁定，
+// 后续调用复用 static 缓存避免每次磁盘探测。
+// 找不到时返回空串 — 此时 libcurl 退回内置 CA bundle(MinGW 下走 OpenSSL
+// 默认证书路径，依赖系统配置)，TLS 校验仍然开着不会被关掉。
+static const std::string &resolveCaBundlePath()
+{
+    static const std::string path = []() -> std::string {
+        const char *candidates[] = {
+            "cacert.pem",
+            "tools/misc/cacert.pem",
+        };
+        for(const char *p : candidates)
+        {
+            if(fileExist(p))
+                return std::string(p);
+        }
+        return std::string();
+    }();
+    return path;
+}
+
 static inline void curl_set_common_options(CURL *curl_handle, const char *url, long max_file_size = 1048576L)
 {
     curl_easy_setopt(curl_handle, CURLOPT_URL, url);
@@ -71,8 +96,26 @@ static inline void curl_set_common_options(CURL *curl_handle, const char *url, l
     curl_easy_setopt(curl_handle, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl_handle, CURLOPT_MAXREDIRS, 20L);
-    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+    // TLS 证书校验:必须强制开启。原先关掉是为了应对个别机场自签证书，
+    // 但代价是任何中间人都能替换订阅 YAML / GitHub release 元数据，
+    // 本地工具链路上的"信任"全靠这一步守住。
+    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 2L);
+    {
+        const std::string &ca = resolveCaBundlePath();
+        if(!ca.empty())
+            curl_easy_setopt(curl_handle, CURLOPT_CAINFO, ca.data());
+    }
+    // 协议白名单:仅允许 http / https。libcurl 默认放开 file/gopher/dict/...
+    // 任何重定向跳到 file:///etc/passwd 都能被读到，必须锁死。
+    // CURLOPT_PROTOCOLS_STR 是 7.85.0(0x075500) 加的 enum，老版本回退到位掩码。
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(curl_handle, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl_handle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+    curl_easy_setopt(curl_handle, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    curl_easy_setopt(curl_handle, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+#endif
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 15L);
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, user_agent_str.data());
     if(max_file_size)
@@ -137,15 +180,10 @@ static int curlGet(const FetchArgument argument, FetchResult &result)
     else
         curl_easy_setopt(curl_handle, CURLOPT_HEADERFUNCTION, dummy_writer);
 
-    unsigned int fail_count = 0, max_fails = 1;
-    while(true)
-    {
-        *result.status_code = curl_easy_perform(curl_handle);
-        if(*result.status_code == CURLE_OK || max_fails >= fail_count)
-            break;
-        else
-            fail_count++;
-    }
+    // 单次执行即可:原先这里写了一个 max_fails=1, fail_count=0 的循环条件，
+    // `max_fails >= fail_count` 第一次就成立直接 break，从来没真正重试过。
+    // 维持原行为(单次)收敛掉死代码，重试逻辑由调用方按需自己加。
+    *result.status_code = curl_easy_perform(curl_handle);
 
     curl_easy_getinfo(curl_handle, CURLINFO_HTTP_CODE, &retVal);
     curl_easy_cleanup(curl_handle);

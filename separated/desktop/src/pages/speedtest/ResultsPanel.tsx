@@ -2,7 +2,20 @@ import { useTest } from "../../store/test";
 import { Badge, Card, SectionTitle } from "../../components/ui";
 import { fmtPingSeconds, fmtSpeed, fmtBytes } from "../../lib/format";
 import { computeCurSpeed, computeMaxSpeed } from "../../lib/speed";
+import { udpLevelLabel, udpLevelTone } from "../../lib/udp";
 import { CheckCircle2, Activity, Inbox } from "lucide-react";
+
+/** 与后端口径对齐的截尾均值(秒):剔除最大样本后平均。
+ *  后端 main.cpp::singleTest 在 success_count>=3 时取 (sum-max)/(n-1)，
+ *  否则裸均值。前端结果表展示的是同一份 rawTcpPingStatus，得用一致算法,
+ *  否则同一节点"实时延迟"和"已完成行延迟"会差出几十毫秒。 */
+function avgRawPing(raw: number[]): number {
+  const v = raw.filter(x => x > 0);
+  if (v.length === 0) return 0;
+  if (v.length < 3) return v.reduce((a, b) => a + b) / v.length;
+  const worst = Math.max(...v);
+  return (v.reduce((a, b) => a + b) - worst) / (v.length - 1);
+}
 
 export default function ResultsPanel() {
   const { results, current, status, targetCount } = useTest();
@@ -15,13 +28,15 @@ export default function ResultsPanel() {
 
   // 实时速度与最高速度都基于 rawSocketSpeed 数组用同一套滑动窗口算法在前端计算,
   // 两者严格同源同尺度,UI 上"实时速度峰值"等于"本节点最高",不受 polling 抽样
-  // 频率影响 — 后端把 0.5s 全量采样保留在数组里,前端拿到数组就拿到全部历史。
+  // 频率影响 — 后端把 0.5s 全量采样保留在数组里，前端拿到数组就拿到全部历史。
   // 详见 lib/speed.ts。
   const cur = current && current.remarks ? current : null;
   const curPing = cur?.gPing ?? 0;
   const curRaw = cur?.rawSocketSpeed;
   const curSpeed = computeCurSpeed(curRaw);
   const curMaxSpeed = computeMaxSpeed(curRaw);
+
+
 
   return (
     <Card className="p-5 flex flex-col">
@@ -102,6 +117,7 @@ export default function ResultsPanel() {
                 <th className="py-2 px-3 bg-bg-elev">丢包</th>
                 <th className="py-2 px-3 bg-bg-elev">平均速度</th>
                 <th className="py-2 px-3 bg-bg-elev">最高速度</th>
+                <th className="py-2 px-3 bg-bg-elev">UDP</th>
                 <th className="py-2 px-3 bg-bg-elev">消耗流量</th>
               </tr>
             </thead>
@@ -116,7 +132,7 @@ export default function ResultsPanel() {
                   </td>
                   <td className="py-2 px-3 text-fg-muted">{r.group}</td>
                   <td className="py-2 px-3 tabular-nums">
-                    {fmtPingSeconds(r.gPing)}
+                    {fmtPingSeconds(avgRawPing(r.rawTcpPingStatus))}
                   </td>
                   <td className="py-2 px-3 tabular-nums">
                     {(r.loss * 100).toFixed(0)}%
@@ -125,11 +141,16 @@ export default function ResultsPanel() {
                     {fmtSpeed(r.dspeed)}
                   </td>
                   <td className="py-2 px-3 font-medium tabular-nums">
-                    {/* 与"实时速度"同源:基于 rawSocketSpeed 用同一套滑动窗口算法,
-                        而非读后端 dspeedMax 字段。已完成节点的 rawSpeed 数组是终态,
+                    {/* 与"实时速度"同源:基于 rawSocketSpeed 用同一套滑动窗口算法，
+                        而非读后端 dspeedMax 字段。已完成节点的 rawSpeed 数组是终态，
                         前后端基于同份数据算结果数学等价;但前端同源能保证测速过程中
                         实时进度区"本节点最高"与表格列字面值严格一致。 */}
                     {fmtSpeed(computeMaxSpeed(r.rawSocketSpeed))}
+                  </td>
+                  <td className="py-2 px-3">
+                    <Badge variant={udpLevelTone(r.natType)}>
+                      {udpLevelLabel(r.natType)}
+                    </Badge>
                   </td>
                   <td className="py-2 px-3 text-fg-muted tabular-nums">
                     {fmtBytes(r.trafficUsed)}

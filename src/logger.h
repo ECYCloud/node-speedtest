@@ -38,7 +38,7 @@ void logInit(bool rpcmode);
 // group_name 留空时只用时间戳，保留旧行为。
 void resultInit(const std::string &group_name = "");
 // level 默认 INFO:webserver 接受连接 / 处理路由这类高频心跳显式传 DEBUG/VERBOSE
-// 即可被 logger 过滤掉,避免 512 KB 主日志被本机心跳塞满,真正的 ERROR/WARN
+// 即可被 logger 过滤掉，避免 512 KB 主日志被本机心跳塞满，真正的 ERROR/WARN
 // 来不及看就被 rotate 走。
 void writeLog(int type, std::string content, int level = LOG_LEVEL_INFO);
 void logEOF();

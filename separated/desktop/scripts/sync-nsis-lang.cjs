@@ -1,4 +1,4 @@
-// 把仓库内的 NSIS 语言文件同步到 Tauri 本地缓存目录,在 tauri build 之前跑。
+// 把仓库内的 NSIS 语言文件同步到 Tauri 本地缓存目录，在 tauri build 之前跑。
 //
 // 背景:
 //   1. SimpChinese.nlf — Tauri NSIS 安装界面用的是 NSIS 内置 nlf 里的按钮文字
@@ -6,19 +6,19 @@
 //      继续安装",上下不一致。Tauri 的 customLanguageFiles 只能覆盖 Tauri 自己的
 //      LangString,改不了 NLF 内置字段。
 //   2. SimpChinese.nsh — Modern UI 2 的 LangString(MUI_INNERTEXT_LICENSE_TOP /
-//      _BOTTOM 等许可证页文案)同样不在 nlf 里,也不接受 customLanguageFiles 覆盖。
+//      _BOTTOM 等许可证页文案)同样不在 nlf 里，也不接受 customLanguageFiles 覆盖。
 //
 // 唯一干净做法是在仓库放修改过的版本,build 前把它复制到 Tauri 用来打包的缓存路径,
 // 让 makensis 编进 setup.exe。
 //
 // CI runner 第一次 build 时 LOCALAPPDATA\tauri\NSIS 还没建,Tauri 是在
-// beforeBundleCommand(本脚本)跑完之后才下载 NSIS 工具链,所以早期版本的脚本
+// beforeBundleCommand(本脚本)跑完之后才下载 NSIS 工具链，所以早期版本的脚本
 // 在目录不存在时 exit(0) → makensis 用了 NSIS 自带默认 nlf("我接受(&I)" + PgDn 提示),
 // 线上发出去的 setup.exe 永远是错的(本地有 cache 看不出来)。
 //
-// 第一次修复尝试只下载了 nsis-3.zip 解压,但 Tauri bundler 在 makensis 之前会校验
+// 第一次修复尝试只下载了 nsis-3.zip 解压，但 Tauri bundler 在 makensis 之前会校验
 // NSIS_REQUIRED_FILES,只要缺一个文件(尤其 Plugins/x86-unicode/additional/
-// nsis_tauri_utils.dll)就 remove_dir_all + 重下整个 NSIS 目录,我们 sync 进去的
+// nsis_tauri_utils.dll)就 remove_dir_all + 重下整个 NSIS 目录，我们 sync 进去的
 // nlf/nsh 被覆盖。所以本脚本必须完整模拟 Tauri 的 NSIS 安装流程:下载 NSIS zip +
 // 单独下载 nsis_tauri_utils.dll,让 Tauri 校验通过不重建,sync 才能保留下来。
 //
@@ -81,10 +81,10 @@ function httpDownload(url, dst, redirects = 5) {
 async function ensureNsisToolset() {
     const nsisUtilsAbs = path.join(nsisRoot, NSIS_TAURI_UTILS_REL_PATH);
     // Tauri 校验目录完整性 = LangFiles 目录在 + nsis_tauri_utils.dll 在。
-    // 缺任一个 Tauri 都会 remove_dir_all 重建,所以两者必须一起齐备。
+    // 缺任一个 Tauri 都会 remove_dir_all 重建，所以两者必须一起齐备。
     if (fs.existsSync(tauriLangDir) && fs.existsSync(nsisUtilsAbs)) return;
 
-    console.log("[sync-nsis-lang] NSIS 目录缺失或不完整,主动下载完整工具链...");
+    console.log("[sync-nsis-lang] NSIS 目录缺失或不完整，主动下载完整工具链...");
     fs.mkdirSync(tauriRoot, { recursive: true });
 
     // 1. 下载 + 解压 NSIS 主包(只在 LangFiles 目录缺时做)
@@ -111,8 +111,8 @@ async function ensureNsisToolset() {
     }
 
     // 2. 下载 nsis_tauri_utils.dll 到 Plugins/x86-unicode/additional/
-    //    Tauri 会校验这个文件的 hash,但版本号写在 URL 里,只要文件存在 Tauri
-    //    最坏情况是 hash 不匹配单独重下这一个,不会触发 remove_dir_all 整个 NSIS。
+    //    Tauri 会校验这个文件的 hash,但版本号写在 URL 里，只要文件存在 Tauri
+    //    最坏情况是 hash 不匹配单独重下这一个，不会触发 remove_dir_all 整个 NSIS。
     if (!fs.existsSync(nsisUtilsAbs)) {
         fs.mkdirSync(path.dirname(nsisUtilsAbs), { recursive: true });
         await httpDownload(NSIS_TAURI_UTILS_URL, nsisUtilsAbs);
@@ -129,12 +129,12 @@ const files = ["SimpChinese.nlf", "SimpChinese.nsh"];
     try {
         await ensureNsisToolset();
     } catch (e) {
-        // 下载失败不致命:Tauri 自己也会再尝试下载,本地用户重跑一次即可。
+        // 下载失败不致命:Tauri 自己也会再尝试下载，本地用户重跑一次即可。
         // 但首次 CI build 仍会回退默认 nlf,显式报警让 build log 暴露问题。
         console.error(`[sync-nsis-lang] 预下载 NSIS 失败(将退化为 Tauri 自行下载): ${e.message}`);
     }
     if (!fs.existsSync(tauriLangDir)) {
-        console.log(`[sync-nsis-lang] LangFiles 目录仍不存在,跳过 nlf/nsh 同步: ${tauriLangDir}`);
+        console.log(`[sync-nsis-lang] LangFiles 目录仍不存在，跳过 nlf/nsh 同步: ${tauriLangDir}`);
         return;
     }
     for (const name of files) {

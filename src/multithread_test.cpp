@@ -12,6 +12,7 @@
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509v3.h>
 
 #include "misc.h"
 #include "socket.h"
@@ -102,6 +103,155 @@ static void SSL_Library_init()
     OpenSSL_add_all_algorithms();
 }
 
+// CA bundle 路径解析:CWD 下找 cacert.pem,找不到再去 exe 同级目录找。
+// Tauri sidecar 模式下 CWD 是 engine 目录,CLI 模式下是 stairspeedtest-mihomo-win64,
+// 两种部署都把 cacert.pem 放在那一层，一次解析即可。返回空字符串表示找不到,
+// 调用方据此降级为不开校验(NotApplicable)。
+static std::string locateCaBundle()
+{
+    static std::string cached;
+    static bool resolved = false;
+    if(resolved) return cached;
+    resolved = true;
+    auto fileExists = [](const std::string &p)
+    {
+        FILE *f = fopen(p.c_str(), "rb");
+        if(f) { fclose(f); return true; }
+        return false;
+    };
+    if(fileExists("cacert.pem")) { cached = "cacert.pem"; return cached; }
+    // 退而求其次:相对路径再加 ./ 前缀，或者 engine 下被 sidecar 改了 CWD,
+    // 这里不做更复杂的可执行文件定位 — 部署侧保证 cacert.pem 与可执行同目录。
+    cached.clear();
+    return cached;
+}
+
+// 测速链路 TLS 校验状态聚合。perform_test 启动前由调用方 reset(),
+// 4 个 worker 并发写入，结束后 perform_test 把 finalize() 的结果赋给 node.tlsVerified。
+// 用文件作用域 atomic 而非 nodeInfo 直接持有 atomic,是为了不破坏 nodeInfo 可拷贝。
+static std::atomic<int> g_tls_verified_count {0};
+static std::atomic<int> g_tls_failed_count {0};
+static std::atomic<int> g_tls_attempted {0};
+
+static void tls_state_reset()
+{
+    g_tls_verified_count.store(0);
+    g_tls_failed_count.store(0);
+    g_tls_attempted.store(0);
+}
+
+static TlsVerifyState tls_state_finalize()
+{
+    if(g_tls_attempted.load() == 0)
+        return TlsVerifyState::NotApplicable;
+    if(g_tls_failed_count.load() > 0)
+        return TlsVerifyState::Failed;
+    if(g_tls_verified_count.load() > 0)
+        return TlsVerifyState::Verified;
+    return TlsVerifyState::NotApplicable;
+}
+
+// 配置 SSL_CTX 进入"严格 PKI 模式":加载 Mozilla CA bundle 作为信任根,
+// 启用 SSL_VERIFY_PEER(握手时强制走完信任链校验),失败由后续 SSL_get_verify_result
+// 返回 X509_V_ERR_*。返回 false 表示 CA bundle 不可用，调用方应降级为不
+// 校验(保留旧行为)并把节点标 NotApplicable。
+static bool configureCtxStrict(SSL_CTX *ctx)
+{
+    std::string ca = locateCaBundle();
+    if(ca.empty())
+        return false;
+    if(SSL_CTX_load_verify_locations(ctx, ca.c_str(), nullptr) != 1)
+    {
+        writeLog(LOG_TYPE_WARN, "SSL_CTX_load_verify_locations failed for " + ca);
+        return false;
+    }
+    // SSL_VERIFY_PEER + SSL_get_verify_result:握手期间走完证书链/吊销/有效期
+    // 校验，失败时握手仍可能成功(取决于 OpenSSL 版本和加密套件),所以握手
+    // 完成后必须再读 SSL_get_verify_result 才算真正核实。
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
+    SSL_CTX_set_verify_depth(ctx, 9);
+    return true;
+}
+
+// 完成 TLS 握手 + PKI 验证 + 主机名校验。返回 true 表示证书核实通过;
+// 任一步失败返回 false,日志里写明具体原因便于排错。
+// 注意:本函数只回报状态给上层 worker,不直接写 node.tlsVerified —— 多 worker
+// 并发，统一由 g_tls_*counter 聚合。
+static bool tlsHandshakeAndVerify(SSL *ssl, const std::string &host, const char *channel)
+{
+    // SNI:Cloudflare 等多租户必备，无 server_name 直接 alert 40。
+    SSL_set_tlsext_host_name(ssl, host.c_str());
+    // OpenSSL 1.0.2+ 内置主机名验证:把 SAN/CN 与请求 host 自动对齐,
+    // 比手工解析 X509 更稳。失败 SSL_get_verify_result 会返回 hostname mismatch。
+    SSL_set1_host(ssl, host.c_str());
+    if(SSL_connect(ssl) != 1)
+    {
+        unsigned long e = ERR_peek_error();
+        char ebuf[256] = {};
+        if(e) ERR_error_string_n(e, ebuf, sizeof(ebuf));
+        writeLog(LOG_TYPE_WARN, std::string(channel) + " TLS handshake failed for " + host
+                 + (e ? std::string(": ") + ebuf : std::string()));
+        return false;
+    }
+    long vr = SSL_get_verify_result(ssl);
+    if(vr != X509_V_OK)
+    {
+        writeLog(LOG_TYPE_WARN, std::string(channel) + " TLS cert verify failed for " + host
+                 + ": " + X509_verify_cert_error_string(vr));
+        return false;
+    }
+    return true;
+}
+
+// 仅延迟模式专用:经 socks5 → host:port 走一次 OpenSSL 严格握手核实证书,
+// 不发任何 HTTP 请求,握手 / 验证完成立即断开。结果直接写回 node.tlsVerified —
+// 单节点单点写入不会跟其它 worker 抢同一份 g_tls_* 计数器,所以这里独立判定。
+// cacert.pem 不可用 → 维持 NotApplicable,与下载阶段同语义:不撒谎说"已校验"。
+int verifyTlsForLatency(nodeInfo &node, const std::string &socks_addr, int socks_port,
+                        const std::string &host, int host_port)
+{
+    SSL_Library_init();
+    SOCKET s = initSocket(getNetworkType(socks_addr), SOCK_STREAM, IPPROTO_TCP);
+    if(s == INVALID_SOCKET)
+        return -1;
+    push_socket(s);
+    setTimeout(s, 8000);
+    if(startConnect(s, socks_addr, socks_port) == SOCKET_ERROR
+       || connectSocks5(s, "", "") == -1
+       || connectThruSocks(s, host, host_port) == -1)
+        return -1;
+
+    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+    if(ctx == NULL)
+    {
+        writeLog(LOG_TYPE_ERROR, "SSL_CTX_new failed for tls verify.");
+        return -1;
+    }
+    defer(SSL_CTX_free(ctx);)
+
+    if(!configureCtxStrict(ctx))
+    {
+        // cacert.pem 不可用,延迟阶段无证书校验能力,保持 NotApplicable。
+        // 不强行降级为 Verified,避免给用户错误的安全保证。
+        writeLog(LOG_TYPE_WARN, "TLS verify skipped for " + node.remarks
+                 + ": cacert.pem unavailable, falling back to NotApplicable.");
+        return 0;
+    }
+
+    SSL *ssl = SSL_new(ctx);
+    defer(SSL_free(ssl);)
+    SSL_set_fd(ssl, s);
+
+    if(tlsHandshakeAndVerify(ssl, host, "latency"))
+        node.tlsVerified = TlsVerifyState::Verified;
+    else
+        node.tlsVerified = TlsVerifyState::Failed;
+
+    // SSL_shutdown 失败不算事 — 我们只关心 verify 结果，不在乎对端是否优雅断开。
+    SSL_shutdown(ssl);
+    return 0;
+}
+
 int _thread_download(std::string host, int port, std::string uri, std::string localaddr, int localport, std::string username, std::string password, bool useTLS = false)
 {
     launched++;
@@ -138,17 +288,36 @@ int _thread_download(std::string host, int port, std::string uri, std::string lo
         }
         defer(SSL_CTX_free(ctx);)
 
+        // 严格 PKI 模式:加载 Mozilla CA bundle + SSL_VERIFY_PEER + 主机名校验。
+        // CA bundle 找不到时降级为不开校验(保留旧行为不打断测速),节点 TLS
+        // 状态保持 NotApplicable;开起来后任一 worker 校验通过/失败都计入聚合。
+        bool strict = configureCtxStrict(ctx);
+        if(strict)
+            g_tls_attempted.fetch_add(1);
+
         ssl = SSL_new(ctx);
         defer(SSL_free(ssl);)
         SSL_set_fd(ssl, sHost);
-        // SNI 必备:Cloudflare 等多租户 CDN 收到无 server_name 的 ClientHello
-        // 直接回 alert 40 (handshake_failure),4 个并发线程齐死 → 0 字节 → "N/A"。
-        SSL_set_tlsext_host_name(ssl, host.c_str());
 
-        if(SSL_connect(ssl) != 1)
+        if(strict)
         {
-            writeLog(LOG_TYPE_FILEDL, "TLS handshake failed for " + host + " (likely server alert / SNI mismatch).");
-            return -1;
+            if(tlsHandshakeAndVerify(ssl, host, "download"))
+                g_tls_verified_count.fetch_add(1);
+            else
+            {
+                g_tls_failed_count.fetch_add(1);
+                return -1;
+            }
+        }
+        else
+        {
+            // 兼容模式:无 CA bundle,仅 SNI + 握手，不做证书校验，与历史行为一致。
+            SSL_set_tlsext_host_name(ssl, host.c_str());
+            if(SSL_connect(ssl) != 1)
+            {
+                writeLog(LOG_TYPE_FILEDL, "TLS handshake failed for " + host + " (likely server alert / SNI mismatch).");
+                return -1;
+            }
         }
         retVal = SSL_write(ssl, request.data(), request.size());
         if(retVal == SOCKET_ERROR)
@@ -237,15 +406,34 @@ int _thread_upload(std::string host, int port, std::string uri, std::string loca
         }
         defer(SSL_CTX_free(ctx);)
 
+        // 与下载链路同策略:有 CA bundle 走严格校验，否则降级 SNI-only。
+        // 必须在 SSL_new 之前在 ctx 上配置 verify,SSL_new 才会继承这些设置。
+        bool strict = configureCtxStrict(ctx);
+        if(strict)
+            g_tls_attempted.fetch_add(1);
+
         ssl = SSL_new(ctx);
         defer(SSL_free(ssl);)
         SSL_set_fd(ssl, sHost);
-        SSL_set_tlsext_host_name(ssl, host.c_str());
 
-        if(SSL_connect(ssl) != 1)
+        if(strict)
         {
-            writeLog(LOG_TYPE_FILEUL, "TLS handshake failed for " + host + " (upload).");
-            return -1;
+            if(tlsHandshakeAndVerify(ssl, host, "upload"))
+                g_tls_verified_count.fetch_add(1);
+            else
+            {
+                g_tls_failed_count.fetch_add(1);
+                return -1;
+            }
+        }
+        else
+        {
+            SSL_set_tlsext_host_name(ssl, host.c_str());
+            if(SSL_connect(ssl) != 1)
+            {
+                writeLog(LOG_TYPE_FILEUL, "TLS handshake failed for " + host + " (upload).");
+                return -1;
+            }
         }
         SSL_write(ssl, request.data(), request.size());
         while(1)
@@ -323,6 +511,9 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
     // 清零上一节点遗留的瞬时速度采样点。否则若本节点中途异常退出，
     // rawSpeed 末尾会保留前一节点的高值，前端"实时速度"会读到陈旧数据。
     std::fill(std::begin(node.rawSpeed), std::end(node.rawSpeed), 0ULL);
+    // TLS 校验聚合状态需在每个节点测速前清零，否则会把前一节点的计数带过来,
+    // 导致 footer 显示 (n/m) 数字累加成虚假"通过总数"。
+    tls_state_reset();
 
     if(useTLS)
     {
@@ -374,11 +565,11 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
     writeLog(LOG_TYPE_FILEDL, "All threads launched. Start accumulating data.");
     auto start = steady_clock::now();
     unsigned long long transferred_bytes = 0, this_bytes = 0, cur_recv_bytes = 0, max_speed = 0;
-    // 峰值速度规范化:对齐 Speedtest/Cloudflare/LibreSpeed 的标准做法,用滑动窗口
+    // 峰值速度规范化:对齐 Speedtest/Cloudflare/LibreSpeed 的标准做法，用滑动窗口
     // 均值的历史最大值作为"最高速度",而不是单 0.5s 瞬时最大值。
     //   * 单点瞬时最大易被 TSO 聚合、慢启动末期 cwnd 翻倍、丢包后 RTO 大窗口重传等
     //     抖动"虚高"拉到代表不了节点真实带宽的尖峰
-    //   * 与前端展示的"实时速度"(同样 2s 滑动均值)保持同尺度,语义对齐:
+    //   * 与前端展示的"实时速度"(同样 2s 滑动均值)保持同尺度，语义对齐:
     //         maxSpeed = 历史所有 2s 窗口均值 max
     //         curSpeed = 最近 2s 窗口均值
     //     永远 maxSpeed >= curSpeed,且两者可直接比较
@@ -392,7 +583,7 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
 
         node.rawSpeed[i - 1] = this_bytes;
         // 计算覆盖到当前采样点的 2s 滑动窗口均值。前 1-3 个采样点窗口未填满时
-        // 用现有数据均值(避免被 0 拉低,前几格也参与得到最大值就是 OK 的)。
+        // 用现有数据均值(避免被 0 拉低，前几格也参与得到最大值就是 OK 的)。
         {
             int win_begin = (i - 1) - (kPeakWindow - 1);
             if(win_begin < 0) win_begin = 0;
@@ -416,9 +607,9 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
                  + ", current received bytes: " + std::to_string(this_bytes) + ".");
         if(!running)
             break;
-        // 用户在测速过程中点了停止 → 立刻跳出累积循环,后续 EXIT_FLAG=true
+        // 用户在测速过程中点了停止 → 立刻跳出累积循环，后续 EXIT_FLAG=true
         // 会让所有 worker 的 socket 循环也退出。已采集的 rawSpeed/avgSpeed
-        // 保留,方便用户看到部分结果。
+        // 保留，方便用户看到部分结果。
         if(wantStopNow())
         {
             writeLog(LOG_TYPE_FILEDL, "Stop requested, breaking download accumulation loop.");
@@ -454,6 +645,10 @@ int perform_test(nodeInfo &node, std::string localaddr, int localport, std::stri
         pthread_join(threads[i], NULL);
         writeLog(LOG_TYPE_FILEDL, "Thread #" + std::to_string(i + 1) + " has exited.");
     }
+    // 聚合 TLS 校验结果到 node:有任一线程证书校验失败 → Failed;否则有线程
+    // 通过 → Verified;一次都没尝试(HTTP 测试 / 全部连接拨不通) → NotApplicable。
+    // renderer_v2 footer 据此条件渲染。
+    node.tlsVerified = tls_state_finalize();
     writeLog(LOG_TYPE_FILEDL, "Multi-thread download test completed.");
     return 0;
 }

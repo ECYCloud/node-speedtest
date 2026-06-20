@@ -1,5 +1,5 @@
 fn main() {
-    // 注入构建时间到二进制,便于运行时识别"装的是哪一版"
+    // 注入构建时间到二进制，便于运行时识别"装的是哪一版"
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() + 8 * 3600) // 北京时间
@@ -24,9 +24,9 @@ fn main() {
     // 让 build.rs 改动也触发后端重新链接(避免 incremental 缓存)
     println!("cargo:rerun-if-changed=src/lib.rs");
 
-    // 把仓库根的 LICENSE / NOTICE / licenses/ 复制到 src-tauri/ 下,供 tauri.conf.json
+    // 把仓库根的 LICENSE / NOTICE / licenses/ 复制到 src-tauri/ 下，供 tauri.conf.json
     // 的 bundle.resources 引用。Tauri 不允许 resources 走 ../.. 跳出 src-tauri,
-    // 所以这里在编译时同步一次,git 通过 .gitignore 忽略副本,源唯一在仓库根。
+    // 所以这里在编译时同步一次,git 通过 .gitignore 忽略副本，源唯一在仓库根。
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
@@ -42,7 +42,7 @@ fn main() {
             println!("cargo:rerun-if-changed={}", src.display());
         }
     }
-    // 第三方依赖许可证(如 mihomo 的 GPL-3.0)放在 licenses/ 子目录下,整目录同步
+    // 第三方依赖许可证(如 mihomo 的 GPL-3.0)放在 licenses/ 子目录下，整目录同步
     let licenses_src = repo_root.join("licenses");
     let licenses_dst = tauri_dir.join("licenses");
     if licenses_src.is_dir() {

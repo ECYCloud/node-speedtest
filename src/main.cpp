@@ -46,14 +46,14 @@ bool pause_on_done = true;
 #ifdef BUILD_WEBSERVER_ENGINE
 #include <atomic>
 // Webserver 引擎模式(供 Tauri 桌面端 sidecar 使用):/web 启动后通过 HTTP 接口
-// 暴露 /readsubscriptions /start /getresults 等路由,由 webgui_wrapper.cpp 实现。
-// CLI 构建(默认)下整个 BUILD_WEBSERVER_ENGINE 段都不编译,二进制保持纯净。
+// 暴露 /readsubscriptions /start /getresults 等路由，由 webgui_wrapper.cpp 实现。
+// CLI 构建(默认)下整个 BUILD_WEBSERVER_ENGINE 段都不编译，二进制保持纯净。
 bool webserver_mode = false;
 std::string listen_address = "127.0.0.1";
 int listen_port = 10870;
 void ssrspeed_webserver_routine(const std::string &listen_address, int listen_port);
 // /stop 路由把它置 true → batchTest 节点循环间检查 → 跳出 → 保留已测结果。
-// /start 启动新一轮时复位。CLI 模式根本编不到 batchTest 里的检查点,无副作用。
+// /start 启动新一轮时复位。CLI 模式根本编不到 batchTest 里的检查点，无副作用。
 extern std::atomic<bool> stop_requested;
 #endif
 
@@ -189,7 +189,8 @@ void clientCheck()
         writeLog(LOG_TYPE_WARN, "mihomo core not found at path " + mihomo_path);
 }
 
-// Build the subscription User-Agent as "Clash mihomo/<ver> stairspeedtest-reborn",
+// Build the subscription User-Agent as
+//   "stairspeedtest-reborn/<app-ver> Clash mihomo/<kernel-ver>"
 // querying the REAL kernel version from `mihomo -v` so it never goes stale.
 // Falls back to MIHOMO_FALLBACK_VERSION if the binary can't be run/parsed.
 // Overrides the global `user_agent_str` defined in webget.cpp.
@@ -220,7 +221,7 @@ static void initUserAgent()
                 ver = token;
         }
     }
-    user_agent_str = "Clash mihomo/" + ver + " stairspeedtest-reborn";
+    user_agent_str = "stairspeedtest-reborn/" VERSION_NO_V " Clash mihomo/" + ver;
     mihomo_kernel_version = ver; // share the real version with the footer
     writeLog(LOG_TYPE_INFO, "Subscription User-Agent: " + user_agent_str);
 }
@@ -319,12 +320,12 @@ bool mihomoWaitReady(int timeout_ms = 5000)
 }
 
 // 轻量探活:连一下 127.0.0.1:9990,连得上即视为内核还在监听 Clash API。
-// 故意不发 HTTP 请求,避免被 mihomo 假死时长时间 hang;用 1.5s 的连接超时
-// 触发立刻失败,避免拖慢测试节奏。
+// 故意不发 HTTP 请求，避免被 mihomo 假死时长时间 hang;用 1.5s 的连接超时
+// 触发立刻失败，避免拖慢测试节奏。
 //
-// 已知局限:仅探测 TCP 端口可达,不探 mihomo goroutine 状态。"端口在但内核
-// 半死"的极端情况下会漏检 — 这种情况下 SwitchProxy 会失败,旧 outbound 上
-// 的下载也会失败,与"进程不在"等价 — 触发外层 ensureAlive 同样会重启。
+// 已知局限:仅探测 TCP 端口可达，不探 mihomo goroutine 状态。"端口在但内核
+// 半死"的极端情况下会漏检 — 这种情况下 SwitchProxy 会失败，旧 outbound 上
+// 的下载也会失败，与"进程不在"等价 — 触发外层 ensureAlive 同样会重启。
 bool mihomoIsAlive()
 {
     SOCKET s = initSocket(getNetworkType("127.0.0.1"), SOCK_STREAM, IPPROTO_TCP);
@@ -335,19 +336,19 @@ bool mihomoIsAlive()
     return rc != SOCKET_ERROR;
 }
 
-// 节点测试前的健康守护:mihomo 内核中途崩溃后,后面所有节点都会因 9990 / 65432
+// 节点测试前的健康守护:mihomo 内核中途崩溃后，后面所有节点都会因 9990 / 65432
 // 拒连而 N/A。用户视角就是"测着测着后面节点全测不出"。
-// 这里在每个节点开测前调用一次,死了就用既有的 config.yaml + provider 重新拉起,
-// outbound 列表自动恢复,本次测试可以无缝续跑。
+// 这里在每个节点开测前调用一次，死了就用既有的 config.yaml + provider 重新拉起,
+// outbound 列表自动恢复，本次测试可以无缝续跑。
 //
 // 设计原则:
 //  * 探活只 ~1ms(一次本地 TCP connect),不影响正常节奏
-//  * 死了只重启一次;重启失败就放弃,让本节点跑完拿 N/A 而不是死循环
-//  * 不动 yaml/provider 文件,不重新 buildProvidersConfig — 那已是上一轮 launch 写好的
+//  * 死了只重启一次;重启失败就放弃，让本节点跑完拿 N/A 而不是死循环
+//  * 不动 yaml/provider 文件，不重新 buildProvidersConfig — 那已是上一轮 launch 写好的
 bool mihomoEnsureAlive()
 {
     if(mihomoIsAlive()) return true;
-    writeLog(LOG_TYPE_WARN, "mihomo Clash API 不可达,内核可能已退出,尝试重启...");
+    writeLog(LOG_TYPE_WARN, "mihomo Clash API 不可达，内核可能已退出，尝试重启...");
 #ifdef _WIN32
     killProgram("mihomo.exe");
 #else
@@ -356,16 +357,25 @@ bool mihomoEnsureAlive()
     runClient(0);
     bool ok = mihomoWaitReady(8000);
     if(ok)
-        writeLog(LOG_TYPE_INFO, "mihomo 重启完成,继续测试。");
+        writeLog(LOG_TYPE_INFO, "mihomo 重启完成，继续测试。");
     else
-        writeLog(LOG_TYPE_ERROR, "mihomo 重启后 8s 内仍未就绪,本节点将取得 N/A。");
+        writeLog(LOG_TYPE_ERROR, "mihomo 重启后 8s 内仍未就绪，本节点将取得 N/A。");
     return ok;
 }
 
 // Switch the GLOBAL selector to the given outbound name. Returns true on 2xx.
 bool mihomoSwitchProxy(const std::string &name)
 {
-    std::string body = "{\"name\":\"" + name + "\"}";
+    // 用 rapidjson 序列化:节点名里若混入双引号/反斜杠/控制字符，
+    // 直接字符串拼接会破坏 JSON 结构造成内核拒绝甚至误命中其它 outbound。
+    // Writer 自动处理转义，proxyStr 形态变化也不会再翻车。
+    rapidjson::StringBuffer sb;
+    rapidjson::Writer<rapidjson::StringBuffer> w(sb);
+    w.StartObject();
+    w.Key("name");
+    w.String(name.data(), static_cast<rapidjson::SizeType>(name.size()));
+    w.EndObject();
+    std::string body(sb.GetString(), sb.GetSize());
     std::string resp;
     long code = webPut("http://127.0.0.1:9990/proxies/GLOBAL", body, "", string_array{}, &resp);
     if(code >= 200 && code < 300)
@@ -397,8 +407,8 @@ static bool mihomoMeasureDelay(const std::string &proxy_name, int *out_ms,
 }
 
 // 兜底:mihomo /delay 失败(常见于 hy2/anytls 等 QUIC 节点对内核内置 HEAD 不友好,
-// 或测试 URL 被节点出口运营商拦截)时,改走 libcurl 经 mihomo socks5 自己发 HEAD。
-// 口径不同 — 含一次完整拨号+握手+HEAD 的 wall clock,数字会偏高,但比显示 N/A 好,
+// 或测试 URL 被节点出口运营商拦截)时，改走 libcurl 经 mihomo socks5 自己发 HEAD。
+// 口径不同 — 含一次完整拨号+握手+HEAD 的 wall clock,数字会偏高，但比显示 N/A 好,
 // 用户至少能看到节点是"通的、慢" vs "完全不通"的差异。
 static bool socks5MeasureDelay(const std::string &socks_addr, int socks_port,
                                int *out_ms,
@@ -456,7 +466,7 @@ static void reconcileProvider(const std::string &provider,
 }
 
 // 启动 mihomo 内核:把存活节点拆成 file proxy-provider(YAML 单元 + 链接单元),
-// 写盘后起内核;内核自己解析协议字段,新协议跟着内核走无需改 C++。就绪后反查
+// 写盘后起内核;内核自己解析协议字段，新协议跟着内核走无需改 C++。就绪后反查
 // /providers/proxies 回填每个节点权威的 name(切 outbound 用)和 type(显示用)。
 //
 // 返回 true 表示 Clash API 已就绪可测试;false 表示无可测节点或启动超时。
@@ -467,7 +477,7 @@ bool launchMihomoForNodes(std::vector<nodeInfo> &nodes)
 
     ProvidersBuild build = buildProvidersConfig(nodes, socksport, "127.0.0.1:9990");
     if(build.yaml_order.empty() && build.link_order.empty())
-        return false; // 全是 LOG 导入或空节点,无需内核
+        return false; // 全是 LOG 导入或空节点，无需内核
 
     // 先杀掉旧的 mihomo，避免 9990 / 端口冲突
 #ifdef _WIN32
@@ -546,7 +556,7 @@ void readConf(std::string path)
     ini.GetBoolIfExist("export_as_ssrspeed", export_as_ssrspeed);
 
 #ifdef BUILD_WEBSERVER_ENGINE
-    // [webserver] 段:仅引擎构建模式下读取,允许 pref.ini 覆盖默认监听地址/端口。
+    // [webserver] 段:仅引擎构建模式下读取，允许 pref.ini 覆盖默认监听地址/端口。
     ini.EnterSection("webserver");
     ini.GetIfExist("listen_address", listen_address);
     ini.GetIntIfExist("listen_port", listen_port);
@@ -643,30 +653,61 @@ static std::string translateIsp(const std::string &raw)
     return raw;
 }
 
-// 异步查询本机出口公网 IP 的国家/省/市/运营商，直接调 ip-api.com 中文接口，
+// 异步查询本机出口公网 IP 的国家/省/市/运营商，直接调 ip-api.com 中文接口,
 // 与 desktop/src-tauri 保持一致，所有字段中文化。失败时静默返回(footer 自然
 // 跳过对应行)。仅供 PNG footer 展示，不影响测试主流程。
 //
-// 关键:webGet 第二参数传 "direct://" 显式禁用代理。语义跟 desktop 端
-// get_my_ip_info() 的 .no_proxy() 一致。后端进程被 Tauri 启动时继承了
-// HTTPS_PROXY/HTTP_PROXY env(用于自更新走系统代理),libcurl 默认读 env 会
-// 把这查询也转给代理 → ip-api.com 看到的源 IP 是代理出口 → "测试机"显示
-// 成代理节点位置(如美国 加州 洛杉矶 DMIT)。直连才能拿到本机真实出口。
+// 关键点:
+// 1) webGet 第二参数传 "direct://" 显式禁用代理，语义跟 desktop 端
+//    get_my_ip_info() 的 .no_proxy() 一致 — 后端进程被 Tauri 启动时继承了
+//    HTTPS_PROXY/HTTP_PROXY env(用于自更新走系统代理),libcurl 默认读 env
+//    会把这查询也转给代理 → ip-api.com 看到的源 IP 是代理出口 → "测试机"
+//    显示成代理节点位置。直连才能拿到本机真实出口。
+// 2) 重试机制:免费 ip-api.com 偶发限频或瞬时网络抖动会让单次请求拿到空体
+//    或非 success status,加 5 次尝试 + 每次失败间隔 3 秒，提高 footer 出
+//    数据的概率。整段在 detach 线程里执行，主流程不受影响。
 static void fetchLocalGeoAsync()
 {
     std::thread([](){
-        std::string body = webGet(
-            "http://ip-api.com/json/?lang=zh-CN&fields=country,regionName,city,isp,status",
-            "direct://", 0);
-        if(body.empty()) return;
-        rapidjson::Document j;
-        j.Parse(body.data());
-        if(j.HasParseError()) return;
-        if(GetMember(j, "status") != "success") return;
-        g_local_country = GetMember(j, "country");
-        g_local_region  = GetMember(j, "regionName");
-        g_local_city    = GetMember(j, "city");
-        g_local_isp     = translateIsp(GetMember(j, "isp"));
+        const int MAX_ATTEMPTS = 5;
+        for(int attempt = 1; attempt <= MAX_ATTEMPTS; ++attempt)
+        {
+            std::string body = webGet(
+                "http://ip-api.com/json/?lang=zh-CN&fields=country,regionName,city,isp,status,message",
+                "direct://", 0);
+            std::string fail_reason;
+            do
+            {
+                if(body.empty()) { fail_reason = "empty body"; break; }
+                rapidjson::Document j;
+                j.Parse(body.data());
+                if(j.HasParseError()) { fail_reason = "parse error"; break; }
+                if(GetMember(j, "status") != "success")
+                {
+                    std::string msg = GetMember(j, "message");
+                    fail_reason = "status!=success" + (msg.empty() ? "" : (": " + msg));
+                    break;
+                }
+                // 成功:落地全局并退出
+                g_local_country = GetMember(j, "country");
+                g_local_region  = GetMember(j, "regionName");
+                g_local_city    = GetMember(j, "city");
+                g_local_isp     = translateIsp(GetMember(j, "isp"));
+                writeLog(LOG_TYPE_INFO,
+                         "fetchLocalGeoAsync: success on attempt " + std::to_string(attempt));
+                return;
+            } while(false);
+
+            // 走到这里说明本次失败。最后一次就不再睡。
+            writeLog(LOG_TYPE_WARN,
+                     "fetchLocalGeoAsync attempt " + std::to_string(attempt) + "/"
+                     + std::to_string(MAX_ATTEMPTS) + " failed: " + fail_reason);
+            if(attempt < MAX_ATTEMPTS)
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+        }
+        writeLog(LOG_TYPE_ERROR,
+                 "fetchLocalGeoAsync: all " + std::to_string(MAX_ATTEMPTS)
+                 + " attempts failed, footer 将跳过测试机一行");
     }).detach();
 }
 
@@ -884,22 +925,22 @@ int singleTest(nodeInfo &node)
     defer(auto end = steady_clock::now(); auto lapse = duration_cast<seconds>(end - start); node.duration = lapse.count();)
 
     // 所有节点统一走 mihomo 内核:proxyStr 是内核里的节点名(切 outbound 用),
-    // 测速/延迟都经本地 socks5。SOCKS5/HTTP 也由内核承载,不再有直连分支。
+    // 测速/延迟都经本地 socks5。SOCKS5/HTTP 也由内核承载，不再有直连分支。
     testserver = socksaddr;
     testport = socksport;
     if(!node.proxyStr.empty() && node.proxyStr != "LOG")
     {
-        // 健康守护:本节点开测前先确认 mihomo 还活着,死了就用既有 config 重启。
+        // 健康守护:本节点开测前先确认 mihomo 还活着，死了就用既有 config 重启。
         // 不依赖 mihomoSwitchProxy 的失败重试 — 一旦内核进程退出,SwitchProxy
         // / SOCKS5 / /delay 全数 connect refused,只重试 SwitchProxy 救不回来。
         mihomoEnsureAlive();
         writeLog(LOG_TYPE_INFO, "Switching mihomo outbound to '" + node.proxyStr + "'...");
         if(!mihomoSwitchProxy(node.proxyStr))
         {
-            // 失败立刻重试一次 — 端口刚才确认是活的,失败原因常见是 mihomo 在
+            // 失败立刻重试一次 — 端口刚才确认是活的，失败原因常见是 mihomo 在
             // 加载 provider 的瞬间把 GLOBAL selector 暂时锁住,200ms 后再 PUT
-            // 通常就成功。重试还失败才算真死,直接放弃本节点 — 否则 outbound
-            // 还停在上一节点上,本节点测的会是上一节点的速度,污染结果表。
+            // 通常就成功。重试还失败才算真死，直接放弃本节点 — 否则 outbound
+            // 还停在上一节点上，本节点测的会是上一节点的速度，污染结果表。
             sleep(200);
             if(!mihomoSwitchProxy(node.proxyStr))
             {
@@ -930,7 +971,7 @@ int singleTest(nodeInfo &node)
     printMsg(SPEEDTEST_MESSAGE_STARTGEOIP, rpcmode, id);
     // inboundGeoIP:查节点服务器的 IP 元信息(归属地/ISP),应该用本机直连
     // api.ip.sb,绝不能走系统代理。Tauri sidecar 进程继承 HTTPS_PROXY env 后
-    // libcurl 默认会读取并转发,导致这次查询绕了一圈代理出口。
+    // libcurl 默认会读取并转发，导致这次查询绕了一圈代理出口。
     // outboundGeoIP:查"经过节点出口后看到的 IP",必须走该节点的 SOCKS5,
     // 这才是节点真实出口归属地。proxy 参数已是 socks5://127.0.0.1:port。
     node.inboundGeoIP.set(std::async(std::launch::async, [node](){ return getGeoIPInfo(node.server, "direct://"); }));
@@ -942,15 +983,15 @@ int singleTest(nodeInfo &node)
     }
 
     printMsg(SPEEDTEST_MESSAGE_STARTPING, rpcmode, id);
-    // 延迟测量:所有协议统一调用 mihomo `/proxies/<name>/delay` 接口,与
+    // 延迟测量:所有协议统一调用 mihomo `/proxies/<name>/delay` 接口，与
     // Clash Verge Rev / Karing 等所有 mihomo 客户端一致。
     //
     // 历史背景(为什么之前不一致 → 用户反馈"同 IP 不同协议延迟相差 5-6 倍"):
     //   * 旧版对 TCP 协议(VLESS / Trojan / SS / SSR / VMess)用 libcurl 经
-    //     SOCKS5 + warmup + keep-alive 复用,只测纯 RTT(50ms)
+    //     SOCKS5 + warmup + keep-alive 复用，只测纯 RTT(50ms)
     //   * 旧版对 QUIC 协议(Hysteria2 / Hysteria / TUIC / AnyTLS)用 mihomo
     //     /delay,每次包含完整握手(200-300ms)
-    //   * 同节点同 IP,只换协议,数字差 5-6 倍,完全不可比
+    //   * 同节点同 IP,只换协议，数字差 5-6 倍，完全不可比
     //
     // 经查 mihomo 源码 (adapter/adapter.go::URLTest):
     //     start := time.Now()
@@ -959,10 +1000,10 @@ int singleTest(nodeInfo &node)
     //     resp, err := client.Do(req)                   // 一次 HEAD
     //     t = uint16(time.Since(start) / time.Millisecond)
     //   /delay 内部每次调用都是 "新建拨号 + HEAD 请求",没有连接池复用。
-    //   每次都包含完整握手,所以连续多次采样得到的是同一拨号代价的多次抽样。
+    //   每次都包含完整握手，所以连续多次采样得到的是同一拨号代价的多次抽样。
     //
     // 多次采样取均值:与 SpeedTest++ / NetMonster 等老牌测速工具的"延迟"列对齐。
-    // 单次会被一次握手抖动放大成 +200ms,多次取均值能压住偶发抖动,数字稳定且
+    // 单次会被一次握手抖动放大成 +200ms,多次取均值能压住偶发抖动，数字稳定且
     // 仍跟 Clash Verge / Karing 单次值在同一量级(因为均值就是单次值的期望)。
     const std::string https_probe_url = "https://cp.cloudflare.com/generate_204";
     static const int LATENCY_PROBE_COUNT = 5;
@@ -989,16 +1030,50 @@ int singleTest(nodeInfo &node)
                     rawms[i] = ms;
                     sum_ms += ms;
                     ++success_count;
+                    // 每次成功都把"目前为止的均值"立刻写回 sitePing/avgPing,
+                    // 让前端 polling /getresults 看到累进过程(1 次后 → 单点值,
+                    // 5 次后 → 5 点平均),否则进度区"实时延迟"会一直 -- 直到
+                    // 所有探测完成再瞬间跳到终值。失败那次 rawms[i]=0 不参与
+                    // 均值，所以中间值始终单调可比。
+                    char tcur[16] = {};
+                    snprintf(tcur, sizeof(tcur), "%0.2f",
+                             static_cast<double>(sum_ms) / success_count);
+                    node.avgPing.assign(tcur);
+                    node.sitePing.assign(tcur);
                 }
                 // 失败那次留 rawms[i]=0,前端历史抽样可见;均值只算成功项。
             }
 
             if(success_count > 0)
             {
-                latency_ms = static_cast<double>(sum_ms) / success_count;
-                writeLog(LOG_TYPE_INFO, "mihomo /delay: " + std::to_string(success_count) + "/"
-                         + std::to_string(LATENCY_PROBE_COUNT) + " ok, avg "
-                         + std::to_string(static_cast<int>(latency_ms)) + " ms");
+                // 截尾均值:有效样本 >= 3 时剔除最大值再平均。每节点首次握手
+                // (TLS / QUIC) 经常飙到稳态的 3-5 倍 — 比如稳态 200ms 的节点
+                // 第 2 次抓到 800ms。裸均值被这一次抖动从 ~210ms 拉到 ~330ms,
+                // 用户视角下"测了 5 次显示的延迟却像最后一两次的高值"。
+                // 与 Speedtest / Clash Verge Rev 延迟列默认行为对齐。
+                if(success_count >= 3)
+                {
+                    int worst = 0;
+                    long long full = 0;
+                    for(int k = 0; k < LATENCY_PROBE_COUNT; ++k)
+                    {
+                        if(rawms[k] <= 0) continue;
+                        if(rawms[k] > worst) worst = rawms[k];
+                        full += rawms[k];
+                    }
+                    latency_ms = static_cast<double>(full - worst) / (success_count - 1);
+                    writeLog(LOG_TYPE_INFO, "mihomo /delay: " + std::to_string(success_count) + "/"
+                             + std::to_string(LATENCY_PROBE_COUNT) + " ok, trimmed avg "
+                             + std::to_string(static_cast<int>(latency_ms)) + " ms (excl max "
+                             + std::to_string(worst) + ")");
+                }
+                else
+                {
+                    latency_ms = static_cast<double>(sum_ms) / success_count;
+                    writeLog(LOG_TYPE_INFO, "mihomo /delay: " + std::to_string(success_count) + "/"
+                             + std::to_string(LATENCY_PROBE_COUNT) + " ok, avg "
+                             + std::to_string(static_cast<int>(latency_ms)) + " ms");
+                }
             }
             else
             {
@@ -1035,6 +1110,18 @@ int singleTest(nodeInfo &node)
             node.avgPing.assign(t);
             node.sitePing.assign(t);
             writeLog(LOG_TYPE_INFO, "Latency: " + node.sitePing + " ms");
+        }
+
+        // 仅延迟模式下 perform_test 整段被跳过,延迟探测又走 mihomo Clash API
+        // 拿不到 verify_result —— footer "已核实 TLS 证书"那行因此永远不画。
+        // 这里给至少一次延迟探测成功的节点补一次 socks5 + OpenSSL 严格握手,
+        // 把 verify 结果写回 node.tlsVerified,与下载阶段同口径。每节点 +1 次
+        // 握手开销 (~100-300ms),仅延迟模式下可接受;速度/全模式不需要,
+        // perform_test 自己就会走真实下载链路握手。
+        if(speedtest_mode == "pingonly" && latency_ms >= 0.0 && !node.proxyStr.empty())
+        {
+            writeLog(LOG_TYPE_INFO, "Verifying TLS certificate via socks5 strict handshake...");
+            verifyTlsForLatency(node, testserver, testport, "cp.cloudflare.com", 443);
         }
     }
     // pkLoss 在下载阶段后由实际下载结果决定:0 字节 → 100%,有数据 → 0%。
@@ -1136,8 +1223,8 @@ void batchTest(std::vector<nodeInfo> &nodes)
         for(auto &x : nodes)
         {
 #ifdef BUILD_WEBSERVER_ENGINE
-            // 前端 POST /stop 触发 → 当前节点跑完前不再启动下一个,直接跳出循环。
-            // 已测节点的结果(写入 nodes 里的字段)保留,后续 saveResult / 渲染照常。
+            // 前端 POST /stop 触发 → 当前节点跑完前不再启动下一个，直接跳出循环。
+            // 已测节点的结果(写入 nodes 里的字段)保留，后续 saveResult / 渲染照常。
             if(stop_requested)
             {
                 writeLog(LOG_TYPE_INFO, "Stop requested, breaking out of batch loop.");
@@ -1148,9 +1235,9 @@ void batchTest(std::vector<nodeInfo> &nodes)
                 x.group = custom_group;
             // per-node 异常隔离:单节点异常(rapidjson assert / mihomo JSON 异常 /
             // socks5 状态机异常等)以前会冲出 batchTest 让 webgui 顶层 catch 兜住,
-            // 后续节点全部被跳过 + saveResult/cur_node_id=-1 不再执行,前端拉到的
+            // 后续节点全部被跳过 + saveResult/cur_node_id=-1 不再执行，前端拉到的
             // 是"半套结果 + status=stopped",体感"测了 20 / 48 就显示已完成"。
-            // 这里把单节点失败收敛在节点内,整批继续跑完。
+            // 这里把单节点失败收敛在节点内，整批继续跑完。
             try
             {
                 singleTest(x);
@@ -1247,8 +1334,8 @@ void addNodes(std::string link, bool multilink)
             link = UrlDecode(getUrlArg(link, "url"));
         // 第一次显式 direct:// 直连。Tauri 启动时给 sidecar 注入了 HTTPS_PROXY env
         // (供"检查更新"走代理),如果这里默认空 proxy,libcurl 会读 env 把订阅请求
-        // 也转给代理,违反"测试相关请求只走本地网络"的约定。墙外订阅(GitHub raw /
-        // 机场域名走 Cloudflare 等)直连失败时,下面 strProxy 兜底再走系统代理一次。
+        // 也转给代理，违反"测试相关请求只走本地网络"的约定。墙外订阅(GitHub raw /
+        // 机场域名走 Cloudflare 等)直连失败时，下面 strProxy 兜底再走系统代理一次。
         strSub = webGet(link, "direct://");
         if(strSub.size() == 0)
         {
@@ -1326,7 +1413,7 @@ void addNodes(std::string link, bool multilink)
         }
         break;
     default:
-        // 直接内容:单条分享链接,或粘贴的 Clash YAML / base64 订阅文本。
+        // 直接内容:单条分享链接，或粘贴的 Clash YAML / base64 订阅文本。
         printMsg(SPEEDTEST_MESSAGE_FETCHSUB, rpcmode);
         if(loadSubscription(link, override_conf_port, nodes) == 0)
         {
@@ -1424,7 +1511,7 @@ int main(int argc, char* argv[])
     writeLog(LOG_TYPE_INFO, "Init completed.");
 
 #ifdef BUILD_WEBSERVER_ENGINE
-    // 如果 pref.ini 或 /web 参数指定了 webserver 模式,把控制权交给 webgui_wrapper,
+    // 如果 pref.ini 或 /web 参数指定了 webserver 模式，把控制权交给 webgui_wrapper,
     // 启动 HTTP 服务后在此线程内阻塞处理请求(start_web_server_multi 阻塞返回前
     // 永远不退出),不再走下面的交互式 CLI 测速流程。
     if(webserver_mode)

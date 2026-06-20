@@ -3,7 +3,7 @@ import { X, Code2, ExternalLink, Scale } from "lucide-react";
 import logoUrl from "../assets/logo.png";
 
 // 关于对话框:展示版本、二改来源(MIT)、mihomo 内核(GPL-3.0)、仓库链接。
-// 法律层面安装向导已强制展示 MIT;此处是行业惯例的「关于」入口,方便用户随时查看。
+// 法律层面安装向导已强制展示 MIT;此处是行业惯例的「关于」入口，方便用户随时查看。
 interface AboutDialogProps {
   open: boolean;
   onClose: () => void;
@@ -14,7 +14,7 @@ const REPO = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo";
 const MIHOMO = "https://github.com/MetaCubeX/mihomo";
 
 export default function AboutDialog({ open, onClose }: AboutDialogProps) {
-  // ESC 关闭 + 锁住背景滚动,与系统对话框观感一致
+  // ESC 关闭 + 锁住背景滚动，与系统对话框观感一致
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -29,7 +29,7 @@ export default function AboutDialog({ open, onClose }: AboutDialogProps) {
 
   if (!open) return null;
 
-  // 用 plugin-opener 走系统浏览器,纯 web 调试时回落到 window.open
+  // 用 plugin-opener 走系统浏览器，纯 web 调试时回落到 window.open
   async function openExternal(url: string) {
     try {
       const { openUrl } = await import("@tauri-apps/plugin-opener");

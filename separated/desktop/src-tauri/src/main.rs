@@ -6,8 +6,8 @@ fn main() {
     stair_speedtest_lib::run()
 }
 
-/// 启动前装 panic hook,把崩溃写到独立日志,即使 setup 之前(GTK/webkit 初始化阶段)
-/// 炸了也能从磁盘上看到现场。路径用 OS 标准用户级目录,无需 AppHandle。
+/// 启动前装 panic hook,把崩溃写到独立日志，即使 setup 之前(GTK/webkit 初始化阶段)
+/// 炸了也能从磁盘上看到现场。路径用 OS 标准用户级目录，无需 AppHandle。
 fn install_panic_hook() {
     let log_path = panic_log_path();
     std::panic::set_hook(Box::new(move |info| {

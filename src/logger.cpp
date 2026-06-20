@@ -25,14 +25,14 @@ std::string resultPath, logPath;
 
 // 单个 .log 文件磁盘上限(字节):超过即把当前 .log 改名为 .log.old(覆盖旧 .old)
 // 后从 0 开始写。保证用户在前端"日志"页打开任意一条主日志时大小始终 ≤ 512 KB,
-// 同时保留上一段为 .log.old 便于追溯。logger 是热路径,用 atomic 计数避免每写
+// 同时保留上一段为 .log.old 便于追溯。logger 是热路径，用 atomic 计数避免每写
 // 一行都 stat 一次磁盘。
 constexpr size_t kLogMaxBytes = 512 * 1024;
 static std::atomic<size_t> g_log_bytes{0};
 
 // 入文件的级别阈值:数字 ≤ 阈值才写。默认 INFO(=3) 让 DEBUG/VERBOSE 的高频
-// 心跳(webserver Accept / handle_cmd 等,前端 polling 每 500ms 触发一次)
-// 不入文件,只保留对排错有用的 FATAL/ERROR/WARNING/INFO。
+// 心跳(webserver Accept / handle_cmd 等，前端 polling 每 500ms 触发一次)
+// 不入文件，只保留对排错有用的 FATAL/ERROR/WARNING/INFO。
 // 需要开发期看心跳时改成 LOG_LEVEL_VERBOSE 即可。
 static int g_log_level_threshold = LOG_LEVEL_INFO;
 
@@ -124,7 +124,7 @@ void resultInit(const std::string &group_name)
 void writeLog(int type, std::string content, int level)
 {
     // level 过滤放在拿锁之前 — 高频心跳(webserver Accept / handle_cmd)直接被
-    // 短路掉,不抢 logger_mutex,也不影响主测试线程的吞吐。
+    // 短路掉，不抢 logger_mutex,也不影响主测试线程的吞吐。
     if(level > g_log_level_threshold)
         return;
     guarded_mutex guard(logger_mutex);
@@ -163,7 +163,7 @@ void writeLog(int type, std::string content, int level)
     }
     content = timestr + typestr + content + "\n";
     // 若本次写入会让 .log 越过 512 KB,先把当前内容 rotate 到 .log.old(覆盖旧的)
-    // 然后 .log 从 0 开始。rename 失败时回退到清空当前文件,保证大小不会失控。
+    // 然后 .log 从 0 开始。rename 失败时回退到清空当前文件，保证大小不会失控。
     size_t cur = g_log_bytes.load(std::memory_order_relaxed);
     if(cur + content.size() > kLogMaxBytes && !logPath.empty())
     {

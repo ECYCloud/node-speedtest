@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Stair Speedtest",
-  "version": "0.1.1",
-  "identifier": "com.stairspeedtest.desktop",
+  "productName": "Node Speedtest",
+  "version": "0.1.2",
+  "identifier": "com.nodespeedtest.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
   "app": {
     "windows": [
       {
-        "title": "Stair Speedtest",
+        "title": "Node Speedtest",
         "width": 1280,
         "height": 820,
         "minWidth": 1024,
@@ -61,7 +61,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest/download/latest.json"
+        "https://github.com/ECYCloud/node-speedtest/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxQTI2MjlGNTYwOTlCREMKUldUY213bFduMktpNFVVTnhHTDgwRjJTWnRUVEdBT1BON3dOUXdEWXFlN0hES214bFM1NHNadTMK",
       "windows": {

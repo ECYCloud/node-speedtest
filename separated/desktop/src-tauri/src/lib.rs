@@ -1,43 +1,26 @@
+mod engine;
+
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, RunEvent, State};
 
-/// supervisor 退出标志:RunEvent::Exit 时置 true,supervisor loop 见到立刻退出,
-/// 避免应用关闭瞬间(主进程已经 kill 掉子进程)还触发"自动重启"把僵尸再拉起来。
+use engine::Engine;
+
+/// 退出标志:clear_app_data / RunEvent::Exit 时置位。
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
-
-/// supervisor 唤醒通道:前端 invoke 实际命中 reqwest send 错误(连接失败 /
-/// 超时 / 连接断)时,Rust 侧调 notify_one() 把 supervisor 从 notified().await
-/// 阻塞中唤醒。supervisor 整个生命周期没有定时器,**唯一驱动源就是这个事件**:
-/// 用户感知到失败的同一时刻 supervisor 才动手，毫秒级响应。HTTP 4xx/5xx 不通过
-/// 这里(那是后端正常拒绝，不是掉线)。
-fn supervisor_wakeup() -> &'static tokio::sync::Notify {
-    use std::sync::OnceLock;
-    static N: OnceLock<tokio::sync::Notify> = OnceLock::new();
-    N.get_or_init(tokio::sync::Notify::new)
-}
-
-/// 后端进程统一监听地址，与 stairspeedtest pref.ini 的 [webserver] 默认值保持一致
-const BACKEND_URL: &str = "http://127.0.0.1:10870";
-
-/// 跨平台可执行文件名:Windows 带 .exe,Linux/macOS 无后缀。
-#[cfg(windows)]
-const ENGINE_EXE: &str = "stairspeedtest.exe";
-#[cfg(not(windows))]
-const ENGINE_EXE: &str = "stairspeedtest";
 
 #[cfg(windows)]
 const MIHOMO_EXE: &str = "mihomo.exe";
 #[cfg(not(windows))]
 const MIHOMO_EXE: &str = "mihomo";
 
-/// 持有后端子进程句柄，应用退出时统一收尾
+/// 进程内测速引擎状态。
 struct BackendState {
-    child: Mutex<Option<Child>>,
+    engine: Arc<Engine>,
 }
 
 /// 路径白名单校验:确保 candidate 解析后落在 base 之内。
@@ -113,17 +96,10 @@ fn engine_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// 启动前同步 bundled engine 到 runtime engine。
 /// 仅在 release 模式下执行;dev 模式 runtime = bundled,跳过。
+/// 指纹基于 CARGO_PKG_VERSION + mihomo 二进制 size/mtime。
 ///
-/// 升级判定 + 完整性校验:
-///   1. 主程序指纹(stairspeedtest.exe 的 size+mtime)— 升级时触发同步
-///   2. tools/ 关键 sentinel 文件 — 历史问题:某次首次安装 copy_dir 中途
-///      失败，只复制了根目录的 DLL/exe,tools/ 子树整个丢了，但 exe 指纹依然
-///      "看起来匹配",于是后续所有启动都 skip,导致 mihomo 永远拉不起来 +
-///      字体加载失败 + 测试结果全 0/N/A。
-///      现在改为只要任意一个 sentinel 缺失就强制重新同步。
-///
-/// 用户的 logs/ 与 results/(历史记录、测试日志)始终保留，只覆盖 exe / DLL /
-/// tools / pref.ini 这些只读资产。
+/// 复制策略:字体等出图关键资产优先、单文件失败不中断整树，避免
+/// `tools/clients/mihomo.exe` 被占用时整次同步中止，导致永远没有字体、结果图失败。
 fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
     #[cfg(debug_assertions)]
     {
@@ -134,31 +110,22 @@ fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
     {
         let src = bundled_engine_dir(app)?;
         let dst = runtime_engine_dir(app)?;
-        let src_exe = src.join(ENGINE_EXE);
+        let src_mihomo = src.join("tools").join("clients").join(MIHOMO_EXE);
 
-        // 关键资产 sentinel:任意一个缺失视作 runtime 不完整，必须重同步。
-        // 涵盖 mihomo / 字体 / config / pref,以及 Linux 上引擎依赖捆进来的核心 .so —
-        // 老版本 deb 没有这些 .so,新版本检测到缺失就强制全量重写。
-        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
-        let mut sentinels: Vec<std::path::PathBuf> = vec![
-            std::path::PathBuf::from("tools/clients").join(MIHOMO_EXE),
-            std::path::PathBuf::from("tools/misc/SourceHanSansCN-Medium.otf"),
-            std::path::PathBuf::from("config.yaml"),
-            std::path::PathBuf::from("pref.ini"),
+        let sentinels: Vec<PathBuf> = vec![
+            PathBuf::from("tools/clients").join(MIHOMO_EXE),
+            PathBuf::from("tools/misc").join("SourceHanSansCN-Medium.otf"),
+            PathBuf::from("pref.ini"),
         ];
-        #[cfg(target_os = "linux")]
-        {
-            sentinels.extend([
-                std::path::PathBuf::from("libyaml-cpp.so.0.7"),
-                std::path::PathBuf::from("libpcre2-8.so.0"),
-                std::path::PathBuf::from("libcurl.so.4"),
-            ]);
-        }
+        // 出图强依赖字体；mihomo 占用时也必须先落到盘上
+        let priority: Vec<PathBuf> = vec![
+            PathBuf::from("tools/misc").join("SourceHanSansCN-Medium.otf"),
+            PathBuf::from("tools/misc").join("TwemojiFlat.ttf"),
+            PathBuf::from("pref.ini"),
+            PathBuf::from("tools/clients").join(MIHOMO_EXE),
+        ];
 
-        // 版本指纹:CARGO_PKG_VERSION + bundled stairspeedtest 的 (size, mtime)。
-        // 同 tag 重发因 mtime 变化也会触发重同步;Tauri std::fs::copy 不保留 mtime,
-        // 用文件持久化比"对比 dst exe mtime"更可靠。
-        let want_sig = compute_engine_signature(&src_exe);
+        let want_sig = compute_engine_signature(&src_mihomo);
         let sig_path = dst.join(".runtime_fingerprint");
         let have_sig = std::fs::read_to_string(&sig_path).ok();
 
@@ -168,19 +135,50 @@ fn ensure_runtime_engine(app: &AppHandle) -> Result<(), String> {
         }
 
         std::fs::create_dir_all(&dst).map_err(|e| format!("创建运行时目录失败: {e}"))?;
-        // 跳过用户数据 logs/results,其他全量覆盖
-        copy_dir_excluding(&src, &dst, &["logs", "results"])?;
         let _ = std::fs::create_dir_all(dst.join("logs"));
         let _ = std::fs::create_dir_all(dst.join("results"));
+        engine::rlog::info(
+            &dst,
+            format!("同步 runtime engine ← {}", src.display()),
+        );
+
+        for rel in &priority {
+            let from = src.join(rel);
+            let to = dst.join(rel);
+            if !from.is_file() {
+                engine::rlog::error(&dst, format!("安装包缺少: {}", from.display()));
+                continue;
+            }
+            if let Err(e) = copy_file_retry(&from, &to) {
+                engine::rlog::warn(&dst, format!("优先同步失败 {}: {e}", rel.display()));
+            }
+        }
+
+        let skipped = copy_dir_excluding_best_effort(&src, &dst, &["logs", "results"]);
+        for e in skipped {
+            engine::rlog::warn(&dst, format!("同步跳过: {e}"));
+        }
+
+        let missing: Vec<String> = sentinels
+            .iter()
+            .filter(|rel| !dst.join(rel).exists())
+            .map(|rel| rel.display().to_string())
+            .collect();
+        if !missing.is_empty() {
+            let msg = format!("runtime 资产不完整: {}", missing.join(", "));
+            engine::rlog::error(&dst, &msg);
+            return Err(msg);
+        }
         let _ = std::fs::write(&sig_path, &want_sig);
+        engine::rlog::info(&dst, "runtime engine 同步完成");
         Ok(())
     }
 }
 
-/// 计算 bundled stairspeedtest 主程序的版本指纹，用作 runtime engine 是否需要重同步的判定。
+/// 计算 bundled mihomo 的版本指纹，用作 runtime engine 是否需要重同步的判定。
 #[cfg(not(debug_assertions))]
-fn compute_engine_signature(src_exe: &std::path::Path) -> String {
-    let (size, mtime) = match std::fs::metadata(src_exe) {
+fn compute_engine_signature(src_bin: &std::path::Path) -> String {
+    let (size, mtime) = match std::fs::metadata(src_bin) {
         Ok(m) => {
             let t = m
                 .modified()
@@ -193,19 +191,56 @@ fn compute_engine_signature(src_exe: &std::path::Path) -> String {
         Err(_) => (0, 0),
     };
     format!(
-        "v{} size={} mtime={}",
+        "v{} mihomo-size={} mtime={}",
         env!("CARGO_PKG_VERSION"),
         size,
         mtime
     )
 }
 
-/// 递归复制目录，跳过指定子目录(按基名)
+/// 覆盖复制单文件；Windows 上文件刚被 taskkill 时可能短暂占用，重试几次。
 #[cfg_attr(debug_assertions, allow(dead_code))]
-fn copy_dir_excluding(src: &Path, dst: &Path, exclude: &[&str]) -> Result<(), String> {
-    std::fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
-    for entry in std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))? {
-        let entry = entry.map_err(|e| e.to_string())?;
+fn copy_file_retry(src: &Path, dst: &Path) -> Result<(), String> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let mut last = String::new();
+    for attempt in 1..=5u32 {
+        match std::fs::copy(src, dst) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last = format!("copy {} -> {}: {e}", src.display(), dst.display());
+                std::thread::sleep(std::time::Duration::from_millis(80 * u64::from(attempt)));
+            }
+        }
+    }
+    Err(last)
+}
+
+/// 递归复制目录，跳过指定子目录(按基名)。单文件失败记入返回列表，不中断其余文件。
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn copy_dir_excluding_best_effort(src: &Path, dst: &Path, exclude: &[&str]) -> Vec<String> {
+    let mut errors = Vec::new();
+    if let Err(e) = std::fs::create_dir_all(dst) {
+        errors.push(format!("mkdir {}: {e}", dst.display()));
+        return errors;
+    }
+    let entries = match std::fs::read_dir(src) {
+        Ok(v) => v,
+        Err(e) => {
+            errors.push(format!("read_dir {}: {e}", src.display()));
+            return errors;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(e.to_string());
+                continue;
+            }
+        };
         let name_os = entry.file_name();
         let name = name_os.to_string_lossy();
         if exclude.iter().any(|x| *x == name.as_ref()) {
@@ -213,213 +248,20 @@ fn copy_dir_excluding(src: &Path, dst: &Path, exclude: &[&str]) -> Result<(), St
         }
         let s = entry.path();
         let d = dst.join(&*name);
-        let ft = entry.file_type().map_err(|e| e.to_string())?;
-        if ft.is_dir() {
-            copy_dir_excluding(&s, &d, exclude)?;
-        } else {
-            std::fs::copy(&s, &d)
-                .map_err(|e| format!("copy {} -> {}: {e}", s.display(), d.display()))?;
-        }
-    }
-    Ok(())
-}
-
-/// 启动后端 stairspeedtest.exe /web,并把工作目录设到 engine 内,
-/// 这样它能就近找到 DLL、tools/、pref.ini、config.yaml。
-fn spawn_backend(app: &AppHandle) -> Result<Child, String> {
-    let dir = engine_dir(app)?;
-    let exe = dir.join(ENGINE_EXE);
-    if !exe.exists() {
-        return Err(format!("后端可执行文件不存在: {}", exe.display()));
-    }
-
-    // stderr/stdout 写入日志文件，便于排查 mihomo 启动失败等问题。
-    // 这比 Stdio::null() 更友好——出问题能直接看日志，而不是黑盒。
-    let logs_dir = dir.join("logs");
-    let _ = std::fs::create_dir_all(&logs_dir);
-    let stdout_log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(logs_dir.join("sidecar-stdout.log"))
-        .map_err(|e| format!("打开 stdout 日志失败: {e}"))?;
-    let stderr_log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(logs_dir.join("sidecar-stderr.log"))
-        .map_err(|e| format!("打开 stderr 日志失败: {e}"))?;
-
-    let mut cmd = Command::new(&exe);
-    cmd.arg("/web")
-        .current_dir(&dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout_log))
-        .stderr(Stdio::from(stderr_log));
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // 关键修复:不用 CREATE_NO_WINDOW(它会让 mihomo 内核在某些 IO 路径上行为异常,
-        // 导致测试结果全 N/A)。改用 DETACHED_PROCESS:子进程脱离父级控制台,
-        // 自己有完整的控制台句柄(虽然不可见),mihomo 行为与 cmd 直接启动一致。
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
-
-    cmd.spawn().map_err(|e| format!("启动后端失败: {e}"))
-}
-
-/// sidecar supervisor:**纯事件驱动**,后端被前端感知到离线时立即重启。
-///
-/// 根因:此前 spawn_backend 后没人监督，后端一旦崩溃(rapidjson assert / 内核段错误 /
-/// mihomo 死锁 / libevent 阻塞)前端 Status 就永远红下去，用户必须自己点"设置 → 重启后端"。
-/// 现在做成自愈:用户感知到失败的同一时刻 supervisor 已经在重启了。
-///
-/// 工作模型:
-///   - 阻塞在 `supervisor_wakeup().notified()` 上等事件,**没有任何定时器在转**
-///   - 唤醒源:api_get / api_post_json / api_post_file 在 reqwest send/text 错误时
-///     调 `notify_one()`(网络层失败，非业务 4xx/5xx)
-///   - 唤醒后做一次确认探活防止单次抖动误杀:
-///     - 进程已退出 → 直接重启
-///     - 进程在 + /getversion 探活成功 → 偶发抖动，后端其实健康，本轮不动
-///     - 进程在 + 探活失败 → 端口在但内核僵化(死锁 / hang),kill 后重启
-///
-/// 与 restart_backend 共用 BackendState.child 这把锁:supervisor 持锁判断 + 持锁 spawn,
-/// restart_backend 也持锁到 spawn 完成，二者不会 race 出"中间态 None → 误重启"。
-async fn supervisor_loop(handle: AppHandle) {
-    use std::time::{Duration, Instant};
-    // setup 流程先 spawn_backend 再 spawn(supervisor_loop),supervisor 进 loop 时
-    // 进程已经在跑，无需启动缓冲;直接进入事件等待。
-    let mut last_restart_at = Instant::now() - Duration::from_secs(60);
-    // 连续重启失败计数:每 spawn_backend 失败一次 +1，成功清零。
-    // 用作指数退避底数，让"端口持续被占 / exe 丢失 / 磁盘满"等长期失败
-    // 不再每次 notify 醒来都立刻重试，避免日志/系统调用爆炸。
-    let mut consecutive_failures: u32 = 0;
-    loop {
-        if SHUTTING_DOWN.load(Ordering::SeqCst) {
-            return;
-        }
-        // 阻塞等事件:前端 reqwest 失败时 notify_one() 唤醒。没有任何定时器,
-        // 没人触发就一直等，体感"用户感知失败 → supervisor 同一时刻动手"。
-        supervisor_wakeup().notified().await;
-        if SHUTTING_DOWN.load(Ordering::SeqCst) {
-            return;
-        }
-
-        // 第一步:持锁判断进程状态,Mutex 不是 async 的所以 await 必须放锁外
-        enum ProcessState {
-            Alive,        // 进程在跑，继续做 HTTP 确认探活
-            Exited,       // try_wait 拿到 status / 出错 / state 是 None,直接重启
-        }
-        let proc_state = {
-            let state = handle.state::<BackendState>();
-            let mut guard = match state.child.lock() {
-                Ok(g) => g,
-                Err(_) => continue,
-            };
-            match guard.as_mut() {
-                Some(child) => match child.try_wait() {
-                    Ok(Some(status)) => {
-                        eprintln!("[supervisor] 后端进程已退出 (status={status:?}),将重启");
-                        *guard = None;
-                        ProcessState::Exited
-                    }
-                    Ok(None) => ProcessState::Alive,
-                    Err(e) => {
-                        eprintln!("[supervisor] try_wait 出错: {e},按崩溃处理");
-                        *guard = None;
-                        ProcessState::Exited
-                    }
-                },
-                // None 表示 setup 时 spawn 失败、或 restart_backend 异常路径,
-                // 也补一次自动起
-                None => ProcessState::Exited,
-            }
-        };
-
-        // 第二步:进程还在的话做一次确认探活;失败即判定 hang,主动 kill 走重启路径。
-        // 单次定生死 — 触发源是用户实际请求失败，信任度高，不再额外累计计数。
-        let need_respawn = match proc_state {
-            ProcessState::Exited => true,
-            ProcessState::Alive => {
-                if check_backend_alive().await {
-                    // 后端其实健康，刚才那次失败是偶发抖动，不动。顺手把失败计数清零:
-                    // 后端能响应 = 系统已恢复，下次再失败应当从基础 3s 防抖重新算。
-                    consecutive_failures = 0;
-                    false
-                } else {
-                    eprintln!("[supervisor] /getversion 探活失败，后端僵化，主动 kill 进入重启");
-                    let state = handle.state::<BackendState>();
-                    if let Ok(mut guard) = state.child.lock() {
-                        if let Some(mut c) = guard.take() {
-                            kill_backend_tree(&mut c);
-                        }
-                    }
-                    true
-                }
-            }
-        };
-
-        if !need_respawn {
-            continue;
-        }
-
-        // 退避:基础 3s + 指数(2^n × 3s 封顶 60s)。第 0/1 次失败用 3s 基础防抖；
-        // 后续每多一次失败就翻倍延迟。封顶 60s 让长期错误不至于完全静默。
-        // 不调 sleep — Notify 不累积，前端持续失败只会让 supervisor 反复
-        // "醒来 → 比较时间 → continue"，毫秒级 noop。
-        let backoff_secs: u64 = match consecutive_failures {
-            0 | 1 => 3,
-            n => std::cmp::min(60u64, 3u64 << std::cmp::min(n - 1, 5)),
-        };
-        if Instant::now().duration_since(last_restart_at) < Duration::from_secs(backoff_secs) {
-            continue;
-        }
-        last_restart_at = Instant::now();
-
-        cleanup_orphans();
-        if let Err(e) = ensure_runtime_engine(&handle) {
-            eprintln!("[supervisor] ensure_runtime_engine 失败: {e}");
-            consecutive_failures = consecutive_failures.saturating_add(1);
-            continue;
-        }
-        // 持锁 spawn,避免 supervisor 自己下一轮见到 None 又触发一次
-        let state = handle.state::<BackendState>();
-        let mut guard = match state.child.lock() {
-            Ok(g) => g,
-            Err(_) => continue,
-        };
-        match spawn_backend(&handle) {
-            Ok(c) => {
-                *guard = Some(c);
-                consecutive_failures = 0;
-                eprintln!("[supervisor] 后端已自动重启");
-            }
+        let ft = match entry.file_type() {
+            Ok(v) => v,
             Err(e) => {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                eprintln!(
-                    "[supervisor] 自动重启失败(连续 {consecutive_failures} 次，下次退避 {}s): {e}",
-                    match consecutive_failures {
-                        0 | 1 => 3,
-                        n => std::cmp::min(60u64, 3u64 << std::cmp::min(n - 1, 5)),
-                    }
-                );
+                errors.push(format!("{}: {e}", s.display()));
+                continue;
             }
+        };
+        if ft.is_dir() {
+            errors.extend(copy_dir_excluding_best_effort(&s, &d, exclude));
+        } else if let Err(e) = copy_file_retry(&s, &d) {
+            errors.push(e);
         }
     }
-}
-
-/// HTTP 探活:GET /getversion,3s 内拿到 2xx 视为健康。3s 上限大于普通响应耗时
-/// 一个数量级，既不会被偶发抖动误判，也能在内核 hang 时尽快触发重启。
-async fn check_backend_alive() -> bool {
-    use std::time::Duration;
-    let fut = local_backend_client()
-        .get(format!("{}/getversion", BACKEND_URL))
-        .send();
-    match tokio::time::timeout(Duration::from_secs(3), fut).await {
-        Ok(Ok(r)) => r.status().is_success(),
-        _ => false,
-    }
+    errors
 }
 
 /// 在 Windows 上调用 taskkill / 其他外部命令，加 CREATE_NO_WINDOW 防止闪现 cmd 窗口
@@ -434,21 +276,18 @@ fn silent_command(program: &str) -> Command {
     cmd
 }
 
-/// 启动后端前先清理可能残留的孤儿 mihomo / stairspeedtest 进程,
-/// 避免端口/句柄冲突导致新后端启动失败或测试中途异常退出。
+/// 启动前清理可能残留的孤儿 mihomo，避免端口冲突。
 #[cfg(windows)]
 fn cleanup_orphans() {
-    for image in ["mihomo.exe", "stairspeedtest.exe"] {
-        let _ = silent_command("taskkill")
-            .args(["/F", "/IM", image, "/T"])
-            .status();
-    }
+    let _ = silent_command("taskkill")
+        .args(["/F", "/IM", "mihomo.exe", "/T"])
+        .status();
 }
 
 /// Linux/macOS 走 pkill -f,匹配命令路径(sidecar 用绝对路径起 mihomo)。
 #[cfg(not(windows))]
 fn cleanup_orphans() {
-    for name in ["mihomo", "stairspeedtest"] {
+    for name in ["mihomo"] {
         let _ = Command::new("pkill")
             .args(["-f", name])
             .stdin(Stdio::null())
@@ -584,43 +423,9 @@ fn apply_high_res_icons(window: &tauri::WebviewWindow) {
 fn apply_high_res_icons(_window: &tauri::WebviewWindow) {}
 // ===== 任务栏图标高分辨率修复 end =====
 
-/// 彻底清理后端进程及其子孙(mihomo 内核),避免孤儿。child.kill() 不递归,
-/// Windows 用 taskkill /T,Linux/macOS 用 pkill -P + pkill -f mihomo 兜底。
-fn kill_backend_tree(child: &mut Child) {
-    let pid = child.id();
-    let _ = child.kill();
-    let _ = child.wait();
-    #[cfg(windows)]
-    {
-        // /T 杀整个进程树,/F 强制
-        let _ = silent_command("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .status();
-        // 同时把名为 mihomo.exe 的孤儿也清理一遍(以防万一)
-        let _ = silent_command("taskkill")
-            .args(["/F", "/IM", "mihomo.exe", "/T"])
-            .status();
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = Command::new("pkill")
-            .args(["-P", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        let _ = Command::new("pkill")
-            .args(["-f", "mihomo"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
 #[tauri::command]
 fn backend_url() -> &'static str {
-    BACKEND_URL
+    "in-process"
 }
 
 /// 启动闪烁修复:tauri.conf.json 设了 visible:false,窗口启动时不可见,
@@ -640,156 +445,52 @@ fn show_main_window(app: AppHandle) {
     }
 }
 
-/// 与后端 127.0.0.1 通信的专用 reqwest 客户端。
-/// 关键:**.no_proxy()** 绕过系统代理。用户开了系统代理(HTTP_PROXY)时,
-/// reqwest 默认会通过代理转发请求，但代理通常不允许中转 127.0.0.1,
-/// 导致 POST /start、POST /readsubscriptions 全失败 → 测试全 N/A。
-///
-/// 稳定性参数:
-///   - connect_timeout(2s):127.0.0.1 偶发 SYN 失败时立刻报错，而不是吊死
-///     在整体 timeout 上让前端 Status 红屏几十秒
-///   - pool_idle_timeout(20s) + tcp_keepalive(15s):后端 keep-alive 开启后
-///     复用连接，避免短连接洪流让 Windows ephemeral port 紧张
-///   - timeout(15s):轻量请求(/getversion /status /getresults /stop)预算
-///     绰绰有余;重型请求(/start /readsubscriptions /readfileconfig)走
-///     long_backend_client(60s)。
-fn local_backend_client() -> &'static reqwest::Client {
+
+/// 轻量 HTTP 客户端:供外网请求等非引擎路径复用。
+#[allow(dead_code)]
+fn local_http_client() -> &'static reqwest::Client {
     use std::sync::OnceLock;
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(std::time::Duration::from_secs(2))
-            .pool_idle_timeout(std::time::Duration::from_secs(20))
-            .tcp_keepalive(std::time::Duration::from_secs(15))
             .timeout(std::time::Duration::from_secs(15))
             .build()
-            .expect("无法创建 local backend client")
+            .expect("无法创建 local http client")
     })
 }
 
-/// 重型请求专用:/start 内部要等 mihomo 重启就绪、订阅下载、解析等,
-/// 单次 15s 预算不够。其他参数与 local_backend_client 一致。
-fn long_backend_client() -> &'static reqwest::Client {
-    use std::sync::OnceLock;
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .no_proxy()
-            .connect_timeout(std::time::Duration::from_secs(2))
-            .pool_idle_timeout(std::time::Duration::from_secs(20))
-            .tcp_keepalive(std::time::Duration::from_secs(15))
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .expect("无法创建 long backend client")
-    })
-}
-
-/// 路径白名单:重型请求走 60s timeout,其余走 15s。
-fn pick_client(path: &str) -> &'static reqwest::Client {
-    if path.starts_with("/readsubscriptions")
-        || path.starts_with("/readfileconfig")
-        || path.starts_with("/start")
-    {
-        long_backend_client()
-    } else {
-        local_backend_client()
-    }
-}
-
-/// 通过 Rust 侧 reqwest 代理向后端发起请求，绕过 webview 的 mixed-content / CORS 限制
-/// 以及系统代理拦截 127.0.0.1 的问题。统一走 invoke + .no_proxy() 是最稳的做法。
-///
-/// 网络层失败(reqwest::Error,非 HTTP 业务码)会通过 supervisor_wakeup 唤醒
-/// supervisor 立即做确认探活并按需重启。这是 supervisor 的唯一驱动源 —
-/// 用户感知到失败的同一时刻 supervisor 才动手，没有任何后台定时器在转。
 #[tauri::command]
-async fn api_get(path: String) -> Result<String, String> {
-    let url = format!("{}{}", BACKEND_URL, path);
-    let res = pick_client(&path)
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| {
-            supervisor_wakeup().notify_one();
-            e.to_string()
-        })?;
-    let status = res.status();
-    let text = res.text().await.map_err(|e| {
-        supervisor_wakeup().notify_one();
-        e.to_string()
-    })?;
-    if !status.is_success() {
-        return Err(format!("{} {}: {}", path, status.as_u16(), text));
-    }
-    Ok(text)
+async fn api_get(path: String, state: State<'_, BackendState>) -> Result<String, String> {
+    state.engine.handle_get(&path).await
 }
 
 #[tauri::command]
-async fn api_post_json(path: String, body: String) -> Result<String, String> {
-    let url = format!("{}{}", BACKEND_URL, path);
-    let res = pick_client(&path)
-        .post(&url)
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| {
-            supervisor_wakeup().notify_one();
-            e.to_string()
-        })?;
-    let status = res.status();
-    let text = res.text().await.map_err(|e| {
-        supervisor_wakeup().notify_one();
-        e.to_string()
-    })?;
-    if !status.is_success() {
-        return Err(format!("{} {}: {}", path, status.as_u16(), text));
-    }
-    Ok(text)
+async fn api_post_json(
+    path: String,
+    body: String,
+    state: State<'_, BackendState>,
+) -> Result<String, String> {
+    state.engine.handle_post_json(&path, &body).await
 }
 
-/// 上传本地配置文件:用 multipart/form-data,字段名 file
 #[tauri::command]
 async fn api_post_file(
     path: String,
     file_name: String,
     file_bytes: Vec<u8>,
+    state: State<'_, BackendState>,
 ) -> Result<String, String> {
-    let url = format!("{}{}", BACKEND_URL, path);
-    let part = reqwest::multipart::Part::bytes(file_bytes).file_name(file_name);
-    let form = reqwest::multipart::Form::new().part("file", part);
-    let res = pick_client(&path)
-        .post(&url)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| {
-            supervisor_wakeup().notify_one();
-            e.to_string()
-        })?;
-    let status = res.status();
-    let text = res.text().await.map_err(|e| {
-        supervisor_wakeup().notify_one();
-        e.to_string()
-    })?;
-    if !status.is_success() {
-        return Err(format!("{} {}: {}", path, status.as_u16(), text));
-    }
-    Ok(text)
+    let _ = file_name;
+    state.engine.handle_post_file(&path, file_bytes).await
 }
 
-/// 选定本地配置文件后，由 Rust 端一步完成:读取文件字节 → multipart 上传到后端
-/// /readfileconfig → 返回后端响应文本(节点 JSON 数组，或 "error"/"running")。
-///
-/// 为什么不在前端做:Tauri webview 打包模式下 JS 侧读文件 + 多次 invoke 往返
-/// (read_file_base64 → atob → api_post_file)任一环出错都难以察觉，且经过最
-/// 脆弱的链路。收敛到 Rust 单命令后，文件读取与上传全程可控，任何失败都通过
-/// Result::Err 冒泡到前端显示，不再"点了没反应"。
 #[tauri::command]
-async fn import_config_file(path: String) -> Result<String, String> {
-    // 来自系统打开对话框的路径不限基准目录(用户主动指认的文件)，但加 10 MB 上限
-    // 防止误选/恶意大文件把后端 multipart 解析撑爆。订阅与 yaml 配置正常都 < 1 MB。
+async fn import_config_file(
+    path: String,
+    state: State<'_, BackendState>,
+) -> Result<String, String> {
     const MAX_BYTES: u64 = 10 * 1024 * 1024;
     let p = Path::new(&path);
     if !p.is_file() {
@@ -801,45 +502,45 @@ async fn import_config_file(path: String) -> Result<String, String> {
         }
     }
     let bytes = std::fs::read(p).map_err(|e| format!("读取文件失败 {path}: {e}"))?;
-    let file_name = p
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("config")
-        .to_string();
-    let url = format!("{}/readfileconfig", BACKEND_URL);
-    let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name);
-    let form = reqwest::multipart::Form::new().part("file", part);
-    let res = local_backend_client()
-        .post(&url)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| format!("上传到后端失败: {e}"))?;
-    let status = res.status();
-    let text = res.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("/readfileconfig {}: {}", status.as_u16(), text));
-    }
-    Ok(text)
+    state.engine.handle_post_file("/readfileconfig", bytes).await
 }
 
 #[tauri::command]
-fn restart_backend(app: AppHandle, state: State<BackendState>) -> Result<(), String> {
-    // 全程持锁:take 旧 child → spawn 新 child → 写回锁，中间不释放。
-    // 关键:supervisor loop 也走同一把锁，这里持锁 spawn 能保证 supervisor 看到的
-    // 永远是"完整状态"(要么旧 Some、要么新 Some),不会撞到中间的 None 误以为
-    // 后端崩了再触发一次重启。
-    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
-    if let Some(mut c) = guard.take() {
-        kill_backend_tree(&mut c);
-    }
-    // 给 OS 一点时间清理端口/句柄
-    std::thread::sleep(std::time::Duration::from_millis(400));
-    // 重启前先做完整性检查:如果用户的 runtime engine 缺资产(tools/ 子树丢失等),
-    // 这里会触发重新同步，从而让"设置 → 重启后端"成为通用自愈入口。
+async fn restart_backend(app: AppHandle, state: State<'_, BackendState>) -> Result<(), String> {
     ensure_runtime_engine(&app)?;
-    let new_child = spawn_backend(&app)?;
-    *guard = Some(new_child);
+    if let Ok(dir) = runtime_engine_dir(&app) {
+        engine::rlog::info(&dir, "设置：用户请求重启后端");
+    }
+    cleanup_orphans();
+    match state.engine.restart().await {
+        Ok(()) => {
+            if let Ok(dir) = runtime_engine_dir(&app) {
+                engine::rlog::info(&dir, "设置：后端重启完成");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if let Ok(dir) = runtime_engine_dir(&app) {
+                engine::rlog::error(&dir, format!("设置：后端重启失败: {e}"));
+            }
+            Err(e)
+        }
+    }
+}
+
+/// 供前端把设置页等用户操作写入 runtime.log。
+#[tauri::command]
+fn append_runtime_log(
+    app: AppHandle,
+    level: String,
+    message: String,
+) -> Result<(), String> {
+    let dir = runtime_engine_dir(&app)?;
+    match level.to_ascii_uppercase().as_str() {
+        "WARN" | "WARNING" => engine::rlog::warn(&dir, message),
+        "ERROR" => engine::rlog::error(&dir, message),
+        _ => engine::rlog::info(&dir, message),
+    }
     Ok(())
 }
 
@@ -868,28 +569,30 @@ struct ClearAppDataResult {
 ///
 /// dev 模式直接拒绝:dev 下 runtime_engine_dir 指向仓库 engine/,误删后开发环境会废。
 #[tauri::command]
-fn clear_app_data(
+async fn clear_app_data(
     app: AppHandle,
-    state: State<BackendState>,
+    state: State<'_, BackendState>,
 ) -> Result<ClearAppDataResult, String> {
     #[cfg(debug_assertions)]
     {
+        if let Ok(dir) = runtime_engine_dir(&app) {
+            engine::rlog::warn(&dir, "设置：清理应用数据被拒绝（开发模式）");
+        }
         let _ = (app, state);
         return Err("开发模式下禁止清理应用数据，以免误删仓库 engine 目录".into());
     }
     #[cfg(not(debug_assertions))]
     {
-        // 1. 停后端，持锁直到 child 真正退出,supervisor 看不到 None 不会误重启
-        SHUTTING_DOWN.store(true, Ordering::SeqCst);
-        {
-            let mut guard = state.child.lock().map_err(|e| e.to_string())?;
-            if let Some(mut c) = guard.take() {
-                kill_backend_tree(&mut c);
-            }
+        if let Ok(dir) = runtime_engine_dir(&app) {
+            engine::rlog::warn(&dir, "设置：用户确认清理应用数据（将删除 engine 并重启）");
         }
-        // 2. 兜底再杀一遍 mihomo 孤儿，确保 cache.db / logs/ 句柄全释放
+        SHUTTING_DOWN.store(true, Ordering::SeqCst);
+        // 等批次写盘结束再删目录，避免 results/ 残留或删写竞态
+        state
+            .engine
+            .shutdown_and_wait(std::time::Duration::from_secs(45))
+            .await?;
         cleanup_orphans();
-        std::thread::sleep(std::time::Duration::from_millis(500));
 
         let mut cleared: Vec<String> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
@@ -903,7 +606,7 @@ fn clear_app_data(
             }
         }
 
-        // 4. panic.log 在 %APPDATA%\com.stairspeedtest.desktop 下，与 main.rs 的
+        // 4. panic.log 在 %APPDATA%\com.nodespeedtest.desktop 下，与 main.rs 的
         //    panic_log_path 保持同一路径，避免历史崩溃记录残留
         if let Ok(roaming) = app.path().app_data_dir() {
             let panic_log = roaming.join("panic.log");
@@ -940,17 +643,36 @@ struct HistoryItem {
 #[tauri::command]
 fn list_history(app: AppHandle) -> Result<Vec<HistoryItem>, String> {
     use std::collections::BTreeMap;
-    let dir = engine_dir(&app)?.join("results");
+    let engine = engine_dir(&app)?;
+    let dir = engine.join("results");
+    // 目录不存在视为空列表（新装常见），不写运行日志以免进页刷屏
     if !dir.exists() {
         return Ok(vec![]);
     }
     let mut grouped: BTreeMap<String, HistoryItem> = BTreeMap::new();
-    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+    let entries = std::fs::read_dir(&dir).map_err(|e| {
+        let msg = format!("读取历史目录失败 {}: {e}", dir.display());
+        engine::rlog::error(&engine, &msg);
+        msg
+    })?;
+    for entry in entries {
         let Ok(entry) = entry else { continue };
         let path = entry.path();
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else { continue };
-        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-        let meta = entry.metadata().map_err(|e| e.to_string())?;
+        if !path.is_file() {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
+            continue;
+        };
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ext != "log" && ext != "png" {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
         let modified_ms = meta
             .modified()
             .ok()
@@ -965,10 +687,10 @@ fn list_history(app: AppHandle) -> Result<Vec<HistoryItem>, String> {
             modified_ms: 0,
         });
         let p = path.to_string_lossy().into_owned();
-        match ext {
-            "log" => item.log_path = Some(p),
-            "png" => item.image_path = Some(p),
-            _ => continue,
+        if ext == "log" {
+            item.log_path = Some(p);
+        } else {
+            item.image_path = Some(p);
         }
         item.size += meta.len();
         if modified_ms > item.modified_ms {
@@ -1028,7 +750,17 @@ fn list_log_files(app: AppHandle) -> Result<Vec<LogFile>, String> {
             modified_ms,
         });
     }
-    out.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    // 运行日志优先，其余按修改时间倒序
+    out.sort_by(|a, b| {
+        let rank = |n: &str| match n {
+            "runtime.log" => 0,
+            "app-startup.log" => 1,
+            _ => 2,
+        };
+        rank(&a.name)
+            .cmp(&rank(&b.name))
+            .then_with(|| b.modified_ms.cmp(&a.modified_ms))
+    });
     Ok(out)
 }
 
@@ -1225,7 +957,7 @@ async fn get_my_ip_info() -> Result<GeoIpInfo, String> {
         // 强制本地 IPv4 套接字出网，避免 IPv6 接口被解析到 IPv6 节点
         .local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
         .timeout(std::time::Duration::from_secs(8))
-        .user_agent("Mozilla/5.0 StairSpeedtest")
+        .user_agent("Mozilla/5.0 NodeSpeedtest")
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -1258,22 +990,22 @@ fn write_startup_banner(app: &AppHandle) {
     let Ok(dir) = engine_dir(app) else { return };
     let logs = dir.join("logs");
     let _ = std::fs::create_dir_all(&logs);
+    let now = chrono_now();
+    let banner = format!(
+        "startup pkg={} build={} proxy_mode={} runtime_engine={}",
+        env!("CARGO_PKG_VERSION"),
+        BUILD_TIME,
+        NOPROXY_TAG,
+        dir.display()
+    );
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(logs.join("app-startup.log"))
     {
-        let now = chrono_now();
-        let _ = writeln!(
-            f,
-            "[{}] startup pkg={} build={} proxy_mode={} runtime_engine={}",
-            now,
-            env!("CARGO_PKG_VERSION"),
-            BUILD_TIME,
-            NOPROXY_TAG,
-            dir.display()
-        );
+        let _ = writeln!(f, "[{now}] {banner}");
     }
+    engine::rlog::info(&dir, banner);
 }
 
 /// 仅用于日志的 yyyy-mm-dd HH:MM:SS 时间字符串(避免引入 chrono 依赖)
@@ -1307,41 +1039,6 @@ fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-/// 后台跑一次 .no_proxy() 自检:
-/// 等后端起来后向 /getversion 发 GET,把结果写到 app-startup.log。
-/// 如果用户机器上系统代理拦截了 127.0.0.1,这条记录会显示成功(因为 .no_proxy 生效),
-/// 否则会有错误信息可以直接定位。
-async fn self_check(app: AppHandle) {
-    use std::io::Write;
-    // 等后端起来 + 监听端口稳定
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    let result = match local_backend_client()
-        .get(format!("{}/getversion", BACKEND_URL))
-        .send()
-        .await
-    {
-        Ok(r) => format!("OK status={} body={}", r.status(), r.text().await.unwrap_or_default()),
-        Err(e) => format!("ERR {e}"),
-    };
-    let proxy_env = std::env::var("HTTP_PROXY")
-        .or_else(|_| std::env::var("http_proxy"))
-        .unwrap_or_else(|_| "(none)".into());
-    let Ok(dir) = engine_dir(&app) else { return };
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("logs").join("app-startup.log"))
-    {
-        let _ = writeln!(
-            f,
-            "[{}] selfcheck HTTP_PROXY={} -> {}",
-            chrono_now(),
-            proxy_env,
-            result
-        );
-    }
-}
-
 /// 下载最新 mihomo 内核覆盖 runtime engine 下的二进制(只动 user 可写目录，不动 bundle)。
 /// 资产按当前 OS+arch 选 zip(Windows)或 gz(Linux/macOS),失败时用 .bak 还原。
 #[derive(Serialize)]
@@ -1356,13 +1053,27 @@ struct UpdateResult {
 // 三平台自动 download + install + relaunch。无需后端命令对应。
 
 #[tauri::command]
-async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> {
+async fn download_mihomo_update(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> Result<UpdateResult, String> {
     use std::io::Read;
+
+    if let Ok(dir) = runtime_engine_dir(&app) {
+        engine::rlog::info(&dir, "设置：开始下载并安装 mihomo 内核更新");
+    }
+
+    if state.engine.is_running() {
+        if let Ok(dir) = runtime_engine_dir(&app) {
+            engine::rlog::warn(&dir, "设置：mihomo 更新被拒绝（测速进行中）");
+        }
+        return Err("测速进行中，请先停止后再更新内核".into());
+    }
 
     // 不能 .no_proxy():国内直连 GitHub 资产域必走系统代理才能下载成功
     let dl_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
-        .user_agent("stairspeedtest-reborn-desktop")
+        .user_agent("NodeSpeedtest-desktop")
         .build()
         .map_err(|e| format!("创建下载 client 失败: {e}"))?;
 
@@ -1474,6 +1185,24 @@ async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> 
     let mihomo_path = clients_dir.join(MIHOMO_EXE);
     let backup_path = clients_dir.join(format!("{MIHOMO_EXE}.bak"));
 
+    // 下载期间用户可能又点了测速：替换前再拦一次，并等批次真正收尾
+    if state.engine.is_running() {
+        if let Ok(dir) = runtime_engine_dir(&app) {
+            engine::rlog::warn(&dir, "设置：mihomo 更新被拒绝（测速进行中）");
+        }
+        return Err("测速进行中，请先停止后再更新内核".into());
+    }
+    if !state
+        .engine
+        .await_idle(std::time::Duration::from_secs(45))
+        .await
+    {
+        if let Ok(dir) = runtime_engine_dir(&app) {
+            engine::rlog::warn(&dir, "设置：mihomo 更新被拒绝（测速任务未停净）");
+        }
+        return Err("测速任务未能停止，请先停止测速后再更新内核".into());
+    }
+
     // 文件被占用就无法覆盖写，先停掉在跑的 mihomo
     #[cfg(windows)]
     {
@@ -1524,9 +1253,16 @@ async fn download_mihomo_update(app: AppHandle) -> Result<UpdateResult, String> 
             .status();
     }
 
+    // 安装结果以磁盘 `mihomo -v` 为准，不用 GitHub tag 口头宣称
+    let verified = engine::read_version_from_binary(&dir);
+    let new_version = if verified.is_empty() { tag } else { verified };
+    engine::rlog::info(
+        &dir,
+        format!("设置：mihomo 内核已更新到 {new_version}"),
+    );
     Ok(UpdateResult {
         success: true,
-        new_version: tag,
+        new_version,
         error: String::new(),
     })
 }
@@ -1672,42 +1408,55 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .manage(BackendState {
-            child: Mutex::new(None),
-        })
         .setup(|app| {
-            // 启动前清理可能残留的孤儿进程(尤其是 mihomo 内核),
-            // 防止端口/句柄被占用导致新后端测试中途异常退出。
             cleanup_orphans();
             let handle = app.handle().clone();
-            // 关键:先把打包的 engine 同步到用户可写位置，避免 Program Files 写权限问题
             if let Err(e) = ensure_runtime_engine(&handle) {
                 eprintln!("[engine] 同步运行时目录失败: {e}");
             }
-            // 写启动横幅到 engine/logs/app-startup.log,方便排查"装的是哪版"
+            let work = engine_dir(&handle).unwrap_or_else(|_| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("engine")
+            });
+            let eng = Arc::new(Engine::new(work));
+            app.manage(BackendState {
+                engine: Arc::clone(&eng),
+            });
             write_startup_banner(&handle);
-            // 后台跑 .no_proxy() 自检，把结果写到 app-startup.log
-            tauri::async_runtime::spawn(self_check(handle.clone()));
-            // 修复任务栏图标模糊:Tauri 2.11.2 仅注入 ICO 第一个条目(我们这是 16x16),
-            // 这里在主窗口创建后立刻用 Win32 API 重设 ICON_BIG/ICON_SMALL 为高分辨率版本。
-            // 详见 apply_high_res_icons 上方的注释。
+            let st = handle.state::<BackendState>();
+            let eng2 = Arc::clone(&st.engine);
+            let handle_log = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                use std::io::Write;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                let result = match eng2.handle_get("/getversion").await {
+                    Ok(body) => format!("OK in-process body={body}"),
+                    Err(e) => format!("ERR {e}"),
+                };
+                let proxy_env = std::env::var("HTTP_PROXY")
+                    .or_else(|_| std::env::var("http_proxy"))
+                    .unwrap_or_else(|_| "(none)".into());
+                let Ok(dir) = engine_dir(&handle_log) else { return };
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(dir.join("logs").join("app-startup.log"))
+                {
+                    let _ = writeln!(
+                        f,
+                        "[{}] selfcheck HTTP_PROXY={} -> {}",
+                        chrono_now(),
+                        proxy_env,
+                        result
+                    );
+                }
+                engine::rlog::info(
+                    &dir,
+                    format!("selfcheck HTTP_PROXY={proxy_env} -> {result}"),
+                );
+            });
             if let Some(w) = handle.get_webview_window("main") {
                 apply_high_res_icons(&w);
             }
-            match spawn_backend(&handle) {
-                Ok(c) => {
-                    let state = handle.state::<BackendState>();
-                    // 中毒(panic 时持锁线程崩了)的话还能拿到 PoisonError，
-                    // 这里取 inner 继续用:Option<Child> 不依赖临时不一致状态。
-                    let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
-                    *guard = Some(c);
-                }
-                Err(e) => eprintln!("[backend] 启动失败: {e}"),
-            }
-            // 启动 supervisor:崩了自动重启,UI 不会一直停在"后端未连接"
-            tauri::async_runtime::spawn(supervisor_loop(handle.clone()));
-            // 兜底:即使前端因 webkit/JS 异常没能调 show_main_window,
-            // 5 秒后主进程也强制让主窗口可见，避免"双击没反应"的体感。
             let h_show = handle.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -1728,6 +1477,7 @@ pub fn run() {
             api_post_file,
             import_config_file,
             restart_backend,
+            append_runtime_log,
             clear_app_data,
             list_history,
             read_file_base64,
@@ -1743,16 +1493,11 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|handle, event| {
             if let RunEvent::Exit = event {
-                // 关键:必须先置位让 supervisor 退出循环，否则它可能在主进程
-                // kill 子进程的瞬间检测到"已退出"再次拉起 mihomo,留下孤儿。
                 SHUTTING_DOWN.store(true, Ordering::SeqCst);
-                let state = handle.state::<BackendState>();
-                // 退出路径上若锁中毒就取 inner 继续走:即便 panic 留了垃圾态,
-                // 我们的目标只是 take() 出 child 把它收掉，语义不依赖锁的健康。
-                let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(mut c) = guard.take() {
-                    kill_backend_tree(&mut c);
+                if let Some(state) = handle.try_state::<BackendState>() {
+                    state.engine.shutdown();
                 }
+                cleanup_orphans();
             }
         });
 }

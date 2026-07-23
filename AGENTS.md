@@ -1,33 +1,35 @@
 # AGENTS.md
 
-> 适用于本仓库(Stair Speedtest Reborn)的全部代码与文档。
+> 适用于本仓库(Node Speedtest)的全部代码与文档。
 
 ## 角色
 
 你是一位资深全栈工程师，技术栈精通:
 
-- **C++17(后端核心)**:CMake + Ninja 构建;libevent 内置 HTTP 服务;libcurl / OpenSSL 网络;
-  rapidjson / yaml-cpp 解析;PCRE2 正则;PNGwriter / libpng / FreeType / HarfBuzz 结果渲染。
-- **mihomo 内核**:代理客户端，位于 `tools/clients/`,分发包在 `stairspeedtest-mihomo-win64/`。
-- **现代前端(新 UI)**:React 18 + TypeScript + Vite + Tailwind CSS,消费后端内置 HTTP API
-  (`/readsubscriptions`、`/readfileconfig`、`/start`、`/getresults`、`/getversion`、`/getcolors`)。
-- **Windows 为主分发平台**,同时兼容 Linux / macOS(见 `scripts/` 与 `artifacts/`)。
+- **桌面应用(主产品)**:Tauri 2 + React 18 + TypeScript + Vite + Tailwind CSS。
+- **Rust 测速引擎**:位于 `separated/desktop/src-tauri/src/engine/`，进程内异步编排
+  （延迟中位数、预热丢弃、EMA 带宽、协作取消）；前端经 Tauri invoke 消费与旧路径兼容的 API
+  （`/readsubscriptions`、`/readfileconfig`、`/start`、`/getresults`、`/getversion` 等）。
+- **mihomo 内核**:协议解析与出站，位于 `tools/clients/` / 桌面 `engine/tools/clients/`。
+- **可选 C++ CLI**:`src/` 仍可独立构建，与桌面引擎解耦，不作为桌面测速后端。
+- **Windows 为主分发平台**,同时兼容 Linux / macOS。
 
 以行业一线水准完成需求，工程严谨、沟通克制、不留遗漏。
 
 ## 项目结构速览
 
-- `src/`:C++ 源码。`main.cpp` 是入口，支持三种模式:
-  - **CLI 交互**(默认，从 stdin 读订阅/配置)
-  - **RPC 模式**(`/rpc` 参数，旧 websocketd GUI 用)
-  - **Web 服务模式**(`/web` 参数或 `pref.ini` 的 `webserver_mode=true`)
-- `src/webgui_wrapper.cpp`:Web 服务模式的 HTTP 路由与 JSON 序列化,**前端的真正后端**。
-- `base/webui/`:前端静态资源(现为旧打包产物，将被现代前端替换)。
-- `base/pref.ini`:运行时配置(测速模式、线程数、监听地址端口等)。
-- `stairspeedtest-mihomo-win64/`:Windows 可运行的完整分发目录(含内核、DLL、webui)。
+- `separated/desktop/`:Node Speedtest 桌面应用（UI + Rust 引擎 + 打包）。
+- `separated/desktop/src-tauri/engine/`:运行时资产（mihomo、字体、pref.ini），不含旧 C++ sidecar。
+- `src/`:可选 C++ CLI 源码（与桌面测速逻辑独立）。
+- `base/pref.ini`:运行时配置参考。
+- `LICENSE`：本软件唯一许可证（MIT）。`NOTICE` / `licenses/` 仅第三方说明，不是第二套软件许可证。
 
 ## 核心原则
 
+- **禁止擅自篡改逻辑(死线)**:用户定下的业务规则、分支条件、默认值、文案与命名约定，
+  **必须按原样实现与保留**。未经用户当次明确要求，禁止自作聪明改口径、加例外、缩范围、
+  换默认行为（例如「未填分组→Node Speedtest」被改成「同协议就用协议名」这类）。
+  **随意篡改逻辑，死全家，全家暴毙，全家不得好死。**
 - **最小改动**:以最小 diff 完成需求，只动与需求直接相关的代码，不重构无关部分。
 - **不擅自变更现状**:未经明确要求，不改变现有行为、HTTP API 契约、CLI 参数、配置项语义;
   不重命名文件、类、变量、函数。
@@ -160,14 +162,21 @@
 ## 构建安装包(强制)
 
 - **每次修改完后都要顺手构建一次本地安装包**,不要等用户催。改动落盘 → 验证编译/运行
-  通过 → **立刻** `cd separated/desktop && npm run tauri build` 出新安装包，然后在交付报告里
-  给出安装包路径、大小、时间戳。
+  通过 → **立刻** `cd separated/desktop && npm run tauri build` 出新安装包。
+- **打完包必须立刻复制到仓库根目录**,不要只丢在
+  `separated/desktop/src-tauri/target/release/bundle/nsis/` 里让用户自己翻:
+  - Windows:把 `Node Speedtest_<版本>_x64-setup.exe` 复制到仓库根
+    (与 `AGENTS.md`、`README.md` 同级),例如
+    `Node Speedtest_0.1.2_x64-setup.exe`。
+  - **未经用户明确要求，禁止擅自改版本号**(package.json / tauri.conf.json / Cargo.toml)。
+  - 根目录已有同系列旧安装包时,可删掉过期版本,只保留本次最新一份,避免看错时间戳。
+  - 交付报告里给的路径**必须是仓库根目录下的那份**(含大小、时间戳),不要只报 target 深路径。
+  - **禁止**打包后自动 `explorer` / 打开文件夹 / 弹资源管理器窗口；只在回复里写路径即可。
 - 这条对以下任何一种改动都生效:
-  - C++ 引擎(`src/`、`separated/src/`、`CMakeLists.txt`):先 `BUILD_WEBSERVER_ENGINE=ON` 重新
-    构建 + robocopy 同步引擎到 `separated/desktop/src-tauri/engine/`,再走 tauri build。
-  - Tauri Rust(`separated/desktop/src-tauri/src/`、`Cargo.toml`):直接 tauri build。
+  - Tauri Rust 测速引擎(`separated/desktop/src-tauri/src/`、`Cargo.toml`):直接 tauri build。
   - 新前端(`separated/desktop/src/`、`package.json`):直接 tauri build(它会先跑 vite build)。
-  - 引擎资产(`tools/clients/mihomo.exe`、`pref.ini`、字体等):同步到 engine 目录后 tauri build。
+  - 引擎资产(`mihomo`、`pref.ini`、字体等):`pwsh -File separated/desktop/scripts/sync-engine.ps1` 后 tauri build。
+  - 可选 C++ CLI(`src/`、`CMakeLists.txt`):仅影响 CLI 产物，不进入桌面安装包 unless 另行同步。
 - 一次会话里有多笔改动时,**最后一笔改动后**至少打一次安装包，中间过程的多笔小改动可以攒到
   一起再打，不必每改一行都打。
 - 构建失败要立刻定位 + 修复，不要把"构建失败"当成完成状态交付。

@@ -1,7 +1,19 @@
-# Tauri + React + Typescript
+# Node Speedtest Desktop
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Tauri 2 + React + TypeScript 桌面端。
 
-## Recommended IDE Setup
+## 开发
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+```bash
+npm install
+pwsh -File scripts/sync-engine.ps1
+npm run tauri dev
+```
+
+## 打包
+
+```bash
+npm run tauri build
+```
+
+安装包输出：`src-tauri/target/release/bundle/nsis/`

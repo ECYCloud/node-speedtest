@@ -5,18 +5,6 @@ import { computeCurSpeed, computeMaxSpeed } from "../../lib/speed";
 import { udpLevelLabel, udpLevelTone } from "../../lib/udp";
 import { CheckCircle2, Activity, Inbox } from "lucide-react";
 
-/** 与后端口径对齐的截尾均值(秒):剔除最大样本后平均。
- *  后端 main.cpp::singleTest 在 success_count>=3 时取 (sum-max)/(n-1)，
- *  否则裸均值。前端结果表展示的是同一份 rawTcpPingStatus，得用一致算法,
- *  否则同一节点"实时延迟"和"已完成行延迟"会差出几十毫秒。 */
-function avgRawPing(raw: number[]): number {
-  const v = raw.filter(x => x > 0);
-  if (v.length === 0) return 0;
-  if (v.length < 3) return v.reduce((a, b) => a + b) / v.length;
-  const worst = Math.max(...v);
-  return (v.reduce((a, b) => a + b) - worst) / (v.length - 1);
-}
-
 export default function ResultsPanel() {
   const { results, current, status, targetCount } = useTest();
   const running = status === "running";
@@ -24,17 +12,22 @@ export default function ResultsPanel() {
   // 不该显示"已完成"——回退到旧的 results.length > 0 兜底。
   // results.length < targetCount → 中途异常或用户停止 → 显示"未完成 (n/m)"。
   const finished = !running && targetCount > 0 && results.length >= targetCount;
-  const interrupted = !running && targetCount > 0 && results.length > 0 && results.length < targetCount;
+  const interrupted = !running && targetCount > 0 && results.length < targetCount;
 
-  // 实时速度与最高速度都基于 rawSocketSpeed 数组用同一套滑动窗口算法在前端计算,
-  // 两者严格同源同尺度,UI 上"实时速度峰值"等于"本节点最高",不受 polling 抽样
-  // 频率影响 — 后端把 0.5s 全量采样保留在数组里，前端拿到数组就拿到全部历史。
-  // 详见 lib/speed.ts。
+  // 实时速度：短窗平滑；最高速度：rawSocketSpeed 峰值（与后端 dspeedMax 同源）。
   const cur = current && current.remarks ? current : null;
-  const curPing = cur?.gPing ?? 0;
+  // 实时延迟用后端累进均值(gPing)；次数以完整探测数组 rawGooglePingStatus 为准
+  const curPing = cur ? cur.gPing || cur.ping || 0 : 0;
+  const pingSamples = (
+    cur?.rawGooglePingStatus?.length
+      ? cur.rawGooglePingStatus
+      : cur?.rawTcpPingStatus ?? []
+  ).filter((x) => x > 0).length;
   const curRaw = cur?.rawSocketSpeed;
   const curSpeed = computeCurSpeed(curRaw);
-  const curMaxSpeed = computeMaxSpeed(curRaw);
+  // 与结果表同源：优先 dspeedMax，否则 raw 峰值
+  const curMaxSpeed =
+    (cur?.dspeedMax ?? 0) > 0 ? (cur!.dspeedMax as number) : computeMaxSpeed(curRaw);
 
 
 
@@ -81,9 +74,11 @@ export default function ResultsPanel() {
             <div className="font-medium truncate">{cur.remarks}</div>
           </div>
           <div>
-            <div className="text-fg-muted text-xs mb-0.5">实时延迟</div>
+            <div className="text-fg-muted text-xs mb-0.5">
+              实时延迟{pingSamples > 0 ? ` · ${pingSamples}次` : ""}
+            </div>
             <div className="font-medium tabular-nums">
-              {curPing > 0 ? fmtPingSeconds(curPing) : "--"}
+              {curPing > 0 ? fmtPingSeconds(curPing) : "测量中…"}
             </div>
           </div>
           <div>
@@ -104,7 +99,11 @@ export default function ResultsPanel() {
       {!running && results.length === 0 ? (
         <div className="flex flex-col items-center justify-center text-fg-muted text-sm gap-2 py-10">
           <Inbox size={28} className="opacity-60" />
-          <span>导入节点后开始测速，结果会出现在这里</span>
+          <span>
+            {interrupted
+              ? `已停止，未完成任何节点 (0/${targetCount})`
+              : "导入节点后开始测速，结果会出现在这里"}
+          </span>
         </div>
       ) : (
         <div className="overflow-auto rounded-lg border border-border max-h-[480px]">
@@ -113,7 +112,7 @@ export default function ResultsPanel() {
               <tr className="text-left bg-bg-elev border-b border-border">
                 <th className="py-2 px-3 bg-bg-elev">备注</th>
                 <th className="py-2 px-3 bg-bg-elev">分组</th>
-                <th className="py-2 px-3 bg-bg-elev">延迟</th>
+                <th className="py-2 px-3 bg-bg-elev">平均延迟</th>
                 <th className="py-2 px-3 bg-bg-elev">丢包</th>
                 <th className="py-2 px-3 bg-bg-elev">平均速度</th>
                 <th className="py-2 px-3 bg-bg-elev">最高速度</th>
@@ -124,7 +123,7 @@ export default function ResultsPanel() {
             <tbody>
               {results.map((r, i) => (
                 <tr
-                  key={i}
+                  key={`${r.group}|${r.remarks}|${r.geoIP?.inbound?.address ?? i}`}
                   className="border-t border-border hover:bg-border/20"
                 >
                   <td className="py-2 px-3 truncate max-w-[260px]">
@@ -132,7 +131,7 @@ export default function ResultsPanel() {
                   </td>
                   <td className="py-2 px-3 text-fg-muted">{r.group}</td>
                   <td className="py-2 px-3 tabular-nums">
-                    {fmtPingSeconds(avgRawPing(r.rawTcpPingStatus))}
+                    {fmtPingSeconds(r.gPing || r.ping || 0)}
                   </td>
                   <td className="py-2 px-3 tabular-nums">
                     {(r.loss * 100).toFixed(0)}%
@@ -141,11 +140,11 @@ export default function ResultsPanel() {
                     {fmtSpeed(r.dspeed)}
                   </td>
                   <td className="py-2 px-3 font-medium tabular-nums">
-                    {/* 与"实时速度"同源:基于 rawSocketSpeed 用同一套滑动窗口算法，
-                        而非读后端 dspeedMax 字段。已完成节点的 rawSpeed 数组是终态，
-                        前后端基于同份数据算结果数学等价;但前端同源能保证测速过程中
-                        实时进度区"本节点最高"与表格列字面值严格一致。 */}
-                    {fmtSpeed(computeMaxSpeed(r.rawSocketSpeed))}
+                    {/* 与测速中「本节点最高」同源：rawSocketSpeed 峰值；
+                        dspeedMax 应由后端从同一数组得出，缺省时前端自算。 */}
+                    {fmtSpeed(
+                      r.dspeedMax > 0 ? r.dspeedMax : computeMaxSpeed(r.rawSocketSpeed)
+                    )}
                   </td>
                   <td className="py-2 px-3">
                     <Badge variant={udpLevelTone(r.natType)}>

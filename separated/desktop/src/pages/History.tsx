@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Image as ImageIcon,
@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { Badge, Button, Card, SectionTitle } from "../components/ui";
 import { fmtBytes, fmtTime } from "../lib/format";
+import { withRefreshSpin } from "../lib/refresh";
+import { runtimeLog } from "../lib/runtimeLog";
 import { cn } from "../lib/cn";
 
 interface HistoryItem {
@@ -28,45 +30,91 @@ export default function History() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tip, setTip] = useState<string | null>(null);
+  const [tipError, setTipError] = useState(false);
+  const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const list = await invoke<HistoryItem[]>("list_history");
-      setItems(list);
-      if (list.length > 0) {
-        if (!active || !list.find((x) => x.name === active.name)) {
-          setActive(list[0]);
-        }
-      } else {
-        setActive(null);
-      }
-    } finally {
-      setLoading(false);
-    }
+  function showTip(msg: string, isError = false) {
+    setTip(msg);
+    setTipError(isError);
+    if (tipTimer.current) clearTimeout(tipTimer.current);
+    tipTimer.current = setTimeout(() => setTip(null), isError ? 5000 : 2500);
   }
 
   useEffect(() => {
-    load();
+    return () => {
+      if (tipTimer.current) clearTimeout(tipTimer.current);
+    };
+  }, []);
+
+  const loadSeq = useRef(0);
+
+  /** spin/log 仅手动点刷新时启用；进页静默加载，避免刷新钮空转与刷运行日志。 */
+  async function load(opts?: { spin?: boolean; log?: boolean }) {
+    const spin = opts?.spin === true;
+    const log = opts?.log === true;
+    const seq = ++loadSeq.current;
+    const work = async () => {
+      try {
+        const list = await invoke<HistoryItem[]>("list_history");
+        if (seq !== loadSeq.current) return;
+        const next = Array.isArray(list) ? list : [];
+        setItems(next);
+        if (next.length > 0) {
+          setActive((prev) => {
+            if (prev && next.find((x) => x.name === prev.name)) return prev;
+            return next[0];
+          });
+        } else {
+          setActive(null);
+        }
+        if (log) {
+          void runtimeLog(`历史记录：手动刷新，共 ${next.length} 条`);
+        }
+      } catch (e) {
+        if (seq !== loadSeq.current) return;
+        setItems([]);
+        setActive(null);
+        showTip(`刷新失败: ${e}`, true);
+        if (log) {
+          void runtimeLog(`历史记录：手动刷新失败 — ${e}`, "ERROR");
+        }
+      }
+    };
+    if (spin) await withRefreshSpin(setLoading, work);
+    else await work();
+  }
+
+  useEffect(() => {
+    void load();
   }, []);
 
   useEffect(() => {
     setImgData(null);
     if (!active?.image_path) return;
-    invoke<string>("read_file_base64", { path: active.image_path }).then(
-      (b64) => setImgData(`data:image/png;base64,${b64}`)
-    );
+    let cancelled = false;
+    const path = active.image_path;
+    invoke<string>("read_file_base64", { path })
+      .then((b64) => {
+        if (!cancelled) setImgData(`data:image/png;base64,${b64}`);
+      })
+      .catch((e) => {
+        if (!cancelled) showTip(`读图失败: ${e}`, true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [active?.image_path]);
 
   async function deleteOne(it: HistoryItem) {
     setBusy(true);
     try {
       await invoke("delete_history_item", { name: it.name });
-      setTip(`已删除 ${it.name}`);
+      showTip(`已删除 ${it.name}`);
       await load();
+    } catch (e) {
+      showTip(`删除失败: ${e}`, true);
     } finally {
       setBusy(false);
-      setTimeout(() => setTip(null), 2500);
     }
   }
 
@@ -74,12 +122,13 @@ export default function History() {
     setBusy(true);
     try {
       const n = await invoke<number>("clear_history");
-      setTip(`已清空 ${n} 个文件`);
+      showTip(`已清空 ${n} 个文件`);
       setConfirmClear(false);
       await load();
+    } catch (e) {
+      showTip(`清空失败: ${e}`, true);
     } finally {
       setBusy(false);
-      setTimeout(() => setTip(null), 2500);
     }
   }
 
@@ -94,7 +143,6 @@ export default function History() {
       filters: [{ name: "测速结果", extensions: ["png"] }],
     });
     if (!target || typeof target !== "string") return;
-    // 拆出目录与基名(去扩展名)
     const norm = target.replace(/\\/g, "/");
     const slash = norm.lastIndexOf("/");
     const dir = slash >= 0 ? target.slice(0, slash) : "";
@@ -107,12 +155,11 @@ export default function History() {
         targetDir: dir,
         destName: base,
       });
-      setTip(`已导出 ${files.length} 个文件到 ${dir}`);
+      showTip(`已导出 ${files.length} 个文件到 ${dir}`);
     } catch (e) {
-      setTip(`导出失败: ${(e as Error).message}`);
+      showTip(`导出失败: ${e}`, true);
     } finally {
       setBusy(false);
-      setTimeout(() => setTip(null), 4000);
     }
   }
 
@@ -125,13 +172,13 @@ export default function History() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={load}
+                onClick={() => void load({ spin: true, log: true })}
                 disabled={loading || busy}
                 title="刷新"
               >
                 <RefreshCw
                   size={14}
-                  className={loading ? "animate-spin" : ""}
+                  className={loading ? "animate-spin" : undefined}
                 />
               </Button>
               <Button
@@ -175,7 +222,12 @@ export default function History() {
           </div>
         )}
         {tip && (
-          <div className="mb-2 px-3 py-2 rounded-md bg-success/10 text-success text-xs">
+          <div
+            className={cn(
+              "mb-2 px-3 py-2 rounded-md text-xs",
+              tipError ? "bg-danger/10 text-danger" : "bg-success/10 text-success"
+            )}
+          >
             {tip}
           </div>
         )}
@@ -183,17 +235,23 @@ export default function History() {
           {items.map((it) => (
             <div
               key={it.name}
+              role="button"
+              tabIndex={0}
+              onClick={() => setActive(it)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setActive(it);
+                }
+              }}
               className={cn(
-                "group rounded-lg border transition",
+                "group rounded-lg border transition cursor-pointer",
                 active?.name === it.name
                   ? "border-primary bg-primary/5"
                   : "border-border hover:bg-border/30"
               )}
             >
-              <button
-                onClick={() => setActive(it)}
-                className="w-full text-left px-3 py-2.5"
-              >
+              <div className="w-full text-left px-3 py-2.5">
                 <div className="text-sm font-medium truncate">{it.name}</div>
                 <div className="text-xs text-fg-muted mt-1 flex items-center gap-2 tabular-nums">
                   <span>{fmtTime(it.modified_ms)}</span>
@@ -214,6 +272,7 @@ export default function History() {
                     </Badge>
                   )}
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       deleteOne(it);
@@ -225,7 +284,7 @@ export default function History() {
                     <Trash2 size={12} />
                   </button>
                 </div>
-              </button>
+              </div>
             </div>
           ))}
           {items.length === 0 && !loading && (
@@ -240,36 +299,38 @@ export default function History() {
         <SectionTitle
           right={
             active && (
-              <div className="flex items-center gap-1.5">
-                <Button
-                  size="sm"
-                  onClick={exportActive}
-                  disabled={busy}
-                >
-                  <Download size={14} />
-                  导出
-                </Button>
-              </div>
+              <Button size="sm" onClick={exportActive} disabled={busy}>
+                <Download size={14} />
+                导出原图
+              </Button>
             )
           }
-          desc={active ? active.name : "选择左侧记录查看详情"}
+          desc={
+            active
+              ? `${active.name} · 适应宽度预览，导出仍为原图像素`
+              : "选择左侧记录查看详情"
+          }
         >
           结果详情
         </SectionTitle>
-        {/* 居中容器换成左上对齐 + 自由滚动:旧版 flex items-center justify-center
-            在原图比容器更大时会上下两端均匀裁切，体感"图片下方被吞了"。
-            现在 overflow-auto 接管溢出，长图也能完整滚动看到。 */}
-        <div className="flex-1 min-h-0 overflow-auto">
+        <div className="flex-1 min-h-0 overflow-auto rounded-xl bg-bg border border-border p-4">
           {active && imgData ? (
-            <img
-              src={imgData}
-              alt={active.name}
-              className="block w-full h-auto rounded-lg shadow-sm border border-border"
-            />
+            <div className="min-h-full flex justify-center">
+              <img
+                src={imgData}
+                alt={active.name}
+                draggable={false}
+                className="rounded-lg shadow-sm border border-border bg-bg-elev max-w-full h-auto object-contain"
+              />
+            </div>
           ) : active ? (
-            <div className="h-full flex items-center justify-center text-fg-muted text-sm">该记录没有图片</div>
+            <div className="h-full flex items-center justify-center text-fg-muted text-sm">
+              该记录没有图片
+            </div>
           ) : (
-            <div className="h-full flex items-center justify-center text-fg-muted text-sm">选择左侧记录查看详情</div>
+            <div className="h-full flex items-center justify-center text-fg-muted text-sm">
+              选择左侧记录查看详情
+            </div>
           )}
         </div>
       </Card>

@@ -11,12 +11,14 @@ export default function NodeList() {
     filter,
     typeFilter,
     group,
+    status,
     setFilter,
     toggleSelect,
     selectAll,
     clearSelect,
     toggleType,
   } = useTest();
+  const locked = status === "running" || status === "stopping";
 
   const types = useMemo(() => {
     const s = new Set<string>();
@@ -58,12 +60,12 @@ export default function NodeList() {
             <Button
               size="sm"
               onClick={() => selectAll(visibleIndices)}
-              disabled={allVisibleSelected}
+              disabled={locked || visibleIndices.length === 0 || allVisibleSelected}
               title="选中当前筛选可见的全部节点"
             >
               全选可见
             </Button>
-            <Button size="sm" variant="ghost" onClick={clearSelect}>
+            <Button size="sm" variant="ghost" onClick={clearSelect} disabled={locked}>
               清空
             </Button>
           </div>
@@ -120,10 +122,11 @@ export default function NodeList() {
               return (
                 <tr
                   key={i}
-                  onClick={() => toggleSelect(i)}
+                  onClick={() => !locked && toggleSelect(i)}
                   className={cn(
-                    "border-t border-border cursor-pointer",
-                    checked ? "bg-primary/5" : "hover:bg-border/20"
+                    "border-t border-border",
+                    locked ? "cursor-not-allowed opacity-80" : "cursor-pointer",
+                    checked ? "bg-primary/5" : !locked && "hover:bg-border/20"
                   )}
                 >
                   <td className="py-2 px-3">

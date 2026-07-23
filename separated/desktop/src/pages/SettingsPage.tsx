@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import { useAppUpdate } from "../store/appUpdate";
 import { useMihomoUpdate } from "../store/mihomoUpdate";
+import { runtimeLog } from "../lib/runtimeLog";
 
 // 类型定义已搬到 src/store/mihomoUpdate.ts(MihomoUpdateInfo / MihomoInstallResult)。
 
@@ -19,7 +20,8 @@ type ClearAppDataResult = {
 // 用户离开设置页(组件 unmount)时，局部 useState 会销毁导致进度/检查中态丢失。
 // 现在状态由 zustand 持有，跨页面切换无缝继续。
 
-const APP_RELEASE_URL = "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest";
+const APP_RELEASE_URL =
+  "https://github.com/ECYCloud/node-speedtest/releases/latest";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -62,9 +64,16 @@ export default function SettingsPage() {
     setRestarting(true);
     try {
       await invoke("restart_backend");
+    } catch (e) {
+      void runtimeLog(`设置：重启后端失败 — ${e}`, "ERROR");
     } finally {
       setRestarting(false);
     }
+  }
+
+  function openManualDownload(url: string, label: string) {
+    void runtimeLog(`设置：打开${label} ${url}`);
+    void openUrl(url);
   }
 
   // 用户在二次确认对话框点"确认清理"才会进入这里:
@@ -79,13 +88,16 @@ export default function SettingsPage() {
     try {
       const r = await invoke<ClearAppDataResult>("clear_app_data");
       if (r.errors.length > 0) {
-        setClearError(`部分项未能删除：\n${r.errors.join("\n")}`);
+        const msg = `部分项未能删除：\n${r.errors.join("\n")}`;
+        setClearError(msg);
+        void runtimeLog(`设置：清理应用数据部分失败 — ${r.errors.join("; ")}`, "WARN");
         setClearing(false);
         return;
       }
       // 清理成功:进程即将由 Rust 端调度重启,UI 保持禁用态等被打断
     } catch (e) {
       setClearError(String(e));
+      void runtimeLog(`设置：清理应用数据失败 — ${e}`, "ERROR");
       setClearing(false);
     }
   }
@@ -106,7 +118,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="p-5">
-        <SectionTitle desc="检查 Stair Speedtest 是否有新版（来源：GitHub ECYCloud/stairspeedtest-reborn-mihomo）">
+        <SectionTitle desc="检查 Node Speedtest 是否有新版（GitHub Releases；需可访问 GitHub 或开启系统代理）">
           软件更新
         </SectionTitle>
         <div className="flex items-center gap-3 flex-wrap">
@@ -142,7 +154,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
-                    onClick={() => openUrl(APP_RELEASE_URL)}
+                    onClick={() => openManualDownload(APP_RELEASE_URL, "软件下载页")}
                   >
                     <ExternalLink size={14} />
                     前往下载页(手动)
@@ -173,7 +185,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
-                    onClick={() => openUrl(APP_RELEASE_URL)}
+                    onClick={() => openManualDownload(APP_RELEASE_URL, "软件下载页")}
                   >
                     <ExternalLink size={14} />
                     手动下载
@@ -254,17 +266,24 @@ export default function SettingsPage() {
                     type="button"
                     className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline disabled:text-fg-muted"
                     disabled={installing}
-                    onClick={() => openUrl(updateInfo.release_url)}
+                    onClick={() =>
+                      openManualDownload(updateInfo.release_url, "mihomo 下载页")
+                    }
                   >
                     <ExternalLink size={14} />
                     手动下载
                   </button>
                 </div>
               </div>
-            ) : updateInfo.latest ? (
+            ) : updateInfo.latest && updateInfo.local ? (
               <div className="flex items-center gap-2 text-green-600">
                 <CheckCircle2 size={14} />
                 <span>已是最新版本</span>
+              </div>
+            ) : updateInfo.latest && !updateInfo.local ? (
+              <div className="flex items-center gap-2 text-amber-500">
+                <AlertCircle size={14} />
+                <span>未能读取本地内核版本，请确认 mihomo 已随包装载</span>
               </div>
             ) : null}
           </div>
@@ -296,6 +315,7 @@ export default function SettingsPage() {
             onClick={() => {
               setClearError(null);
               setConfirmClear(true);
+              void runtimeLog("设置：展开清理应用数据确认");
             }}
           >
             <Trash2 size={14} />
@@ -306,7 +326,7 @@ export default function SettingsPage() {
             <div className="flex items-start gap-2 text-sm text-amber-500">
               <AlertCircle size={14} className="mt-0.5 shrink-0" />
               <span>
-                此操作会删除 <code className="text-xs">%LOCALAPPDATA%\com.stairspeedtest.desktop\engine</code>{" "}
+                此操作会删除 <code className="text-xs">%LOCALAPPDATA%\com.nodespeedtest.desktop\engine</code>{" "}
                 下的全部用户数据（测速结果、订阅、日志、配置、mihomo 缓存），且无法恢复。完成后应用会自动重启，重新同步默认引擎资产。
               </span>
             </div>

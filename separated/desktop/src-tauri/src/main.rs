@@ -3,7 +3,7 @@
 
 fn main() {
     install_panic_hook();
-    stair_speedtest_lib::run()
+    node_speedtest_lib::run()
 }
 
 /// 启动前装 panic hook,把崩溃写到独立日志，即使 setup 之前(GTK/webkit 初始化阶段)
@@ -35,7 +35,7 @@ fn panic_log_path() -> Option<std::path::PathBuf> {
         let home = std::env::var_os("HOME")?;
         return Some(
             std::path::PathBuf::from(home)
-                .join(".local/share/com.stairspeedtest.desktop/panic.log"),
+                .join(".local/share/com.nodespeedtest.desktop/panic.log"),
         );
     }
     #[cfg(target_os = "macos")]
@@ -43,14 +43,14 @@ fn panic_log_path() -> Option<std::path::PathBuf> {
         let home = std::env::var_os("HOME")?;
         return Some(
             std::path::PathBuf::from(home)
-                .join("Library/Application Support/com.stairspeedtest.desktop/panic.log"),
+                .join("Library/Application Support/com.nodespeedtest.desktop/panic.log"),
         );
     }
     #[cfg(target_os = "windows")]
     {
         let appdata = std::env::var_os("APPDATA")?;
         return Some(
-            std::path::PathBuf::from(appdata).join("com.stairspeedtest.desktop\\panic.log"),
+            std::path::PathBuf::from(appdata).join("com.nodespeedtest.desktop\\panic.log"),
         );
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

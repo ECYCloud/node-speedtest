@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw, ScrollText, FileText } from "lucide-react";
 import { Badge, Button, Card, SectionTitle } from "../components/ui";
 import { fmtBytes, fmtTime } from "../lib/format";
+import { withRefreshSpin } from "../lib/refresh";
+import { runtimeLog } from "../lib/runtimeLog";
 import { cn } from "../lib/cn";
 
 interface LogFile {
@@ -16,16 +18,17 @@ interface LogFile {
 // 注:stderr 流承载的是后端运行期诊断信息(进度/警告/报错混合)，并非纯错误，
 // 故标为"诊断输出"而非"错误输出"，避免内容为空时被误解为"漏了错误日志"。
 function labelFor(name: string): string {
+  if (name === "runtime.log") return "运行日志";
+  if (name === "app-startup.log") return "启动日志";
   if (name === "sidecar-stderr.log") return "后端诊断输出";
   if (name === "sidecar-stdout.log") return "后端标准输出";
-  if (name === "app-startup.log") return "启动日志";
   return name.replace(/\.log$/, "");
 }
 
 // 单行着色:含 ERROR/WARN 标红/橙，其余默认。日志同时含正常与错误信息。
 function lineClass(line: string): string {
-  if (/\[ERROR\]|error|失败|ERROR/.test(line)) return "text-danger";
-  if (/\[WARN(ING)?\]|warning/i.test(line)) return "text-warning";
+  if (/\[ERROR\]|\berror\b|失败/i.test(line)) return "text-danger";
+  if (/\[WARN(ING)?\]|\bwarning\b/i.test(line)) return "text-warning";
   return "";
 }
 
@@ -34,38 +37,85 @@ export default function Logs() {
   const [active, setActive] = useState<LogFile | null>(null);
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
+  const [tip, setTip] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function loadList() {
-    setLoading(true);
-    try {
-      const list = await invoke<LogFile[]>("list_log_files");
-      setFiles(list);
-      if (list.length > 0 && (!active || !list.find((x) => x.name === active.name))) {
-        setActive(list[0]);
-      } else if (list.length === 0) {
-        setActive(null);
-        setContent("");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadContent(f: LogFile) {
-    const text = await invoke<string>("read_log_text", { path: f.path, maxKb: 512 });
-    setContent(text);
-    requestAnimationFrame(() =>
-      bottomRef.current?.scrollIntoView({ block: "end" })
-    );
+  function showTip(msg: string) {
+    setTip(msg);
+    if (tipTimer.current) clearTimeout(tipTimer.current);
+    tipTimer.current = setTimeout(() => setTip(null), 5000);
   }
 
   useEffect(() => {
-    loadList();
+    return () => {
+      if (tipTimer.current) clearTimeout(tipTimer.current);
+    };
+  }, []);
+
+  const loadSeq = useRef(0);
+
+  /** spin/log 仅手动点刷新时启用；进页静默加载。 */
+  async function loadList(opts?: { spin?: boolean; log?: boolean }) {
+    const spin = opts?.spin === true;
+    const log = opts?.log === true;
+    const seq = ++loadSeq.current;
+    const work = async () => {
+      try {
+        const list = await invoke<LogFile[]>("list_log_files");
+        if (seq !== loadSeq.current) return;
+        const next = Array.isArray(list) ? list : [];
+        setFiles(next);
+        if (next.length > 0) {
+          setActive((prev) => {
+            if (prev && next.find((x) => x.name === prev.name)) return prev;
+            return next[0];
+          });
+        } else {
+          setActive(null);
+          setContent("");
+        }
+        if (log) {
+          void runtimeLog(`运行日志：手动刷新文件列表，共 ${next.length} 个`);
+        }
+      } catch (e) {
+        if (seq !== loadSeq.current) return;
+        setFiles([]);
+        setActive(null);
+        setContent("");
+        showTip(`刷新失败: ${e}`);
+        if (log) {
+          void runtimeLog(`运行日志：手动刷新失败 — ${e}`, "ERROR");
+        }
+      }
+    };
+    if (spin) await withRefreshSpin(setLoading, work);
+    else await work();
+  }
+
+  useEffect(() => {
+    void loadList();
   }, []);
 
   useEffect(() => {
-    if (active) loadContent(active);
+    if (!active) return;
+    let cancelled = false;
+    const path = active.path;
+    (async () => {
+      try {
+        const text = await invoke<string>("read_log_text", { path, maxKb: 512 });
+        if (cancelled) return;
+        setContent(text);
+        requestAnimationFrame(() =>
+          bottomRef.current?.scrollIntoView({ block: "end" })
+        );
+      } catch (e) {
+        if (!cancelled) setContent(`(读取失败: ${e})`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [active?.path]);
 
   return (
@@ -73,13 +123,24 @@ export default function Logs() {
       <Card className="p-5 flex flex-col">
         <SectionTitle
           right={
-            <Button size="sm" variant="ghost" onClick={loadList} disabled={loading} title="刷新">
-              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void loadList({ spin: true, log: true })}
+              disabled={loading}
+              title="刷新"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : undefined} />
             </Button>
           }
           desc={`共 ${files.length} 个日志文件`}
         >
         </SectionTitle>
+        {tip && (
+          <div className="mb-2 px-3 py-2 rounded-md bg-danger/10 text-danger text-xs">
+            {tip}
+          </div>
+        )}
         <div className="overflow-auto flex flex-col gap-1.5 max-h-[520px]">
           {files.map((f) => (
             <button

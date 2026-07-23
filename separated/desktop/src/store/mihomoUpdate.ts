@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { pollGithubReleaseCheck, type GithubReleaseInfo } from "./githubReleaseCheck";
+import { runtimeLog } from "../lib/runtimeLog";
 
 // /checkupdate 接口返回结构(由 webgui_wrapper.cpp 序列化):
 //   - local       本地内核版本(mihomo -v 读出)
@@ -46,10 +47,22 @@ export const useMihomoUpdate = create<MihomoUpdateStore>((set, get) => ({
     // 会"飞回"污染下次访问，重现用户抱怨的"没点检查就显示了已是最新"。
     const myToken = ++resetToken;
     set({ checking: true, installResult: null, info: null });
+    void runtimeLog("设置：检查 mihomo 内核更新");
     try {
       const info = await pollGithubReleaseCheck("/checkupdate");
       if (myToken !== resetToken) return;
       set({ info });
+      if (info.error) {
+        void runtimeLog(`设置：mihomo 更新检查失败 — ${info.error}`, "ERROR");
+      } else if (info.has_update) {
+        void runtimeLog(
+          `设置：发现 mihomo 新版本 ${info.latest}（本地 ${info.local || "未知"}）`
+        );
+      } else {
+        void runtimeLog(
+          `设置：mihomo 已是最新版本 ${info.latest || info.local || ""}`
+        );
+      }
     } catch (e) {
       if (myToken !== resetToken) return;
       set({
@@ -61,6 +74,7 @@ export const useMihomoUpdate = create<MihomoUpdateStore>((set, get) => ({
           error: String(e),
         },
       });
+      void runtimeLog(`设置：mihomo 更新检查失败 — ${e}`, "ERROR");
     } finally {
       if (myToken === resetToken) set({ checking: false });
     }
@@ -79,21 +93,24 @@ export const useMihomoUpdate = create<MihomoUpdateStore>((set, get) => ({
         installResult: r,
         info: r.success && cur ? { ...cur, local: r.new_version, has_update: false } : cur,
       });
+      if (!r.success) {
+        void runtimeLog(`设置：mihomo 安装失败 — ${r.error}`, "ERROR");
+      }
     } catch (e) {
       if (myToken !== resetToken) return;
       set({
         installResult: { success: false, new_version: "", error: String(e) },
       });
+      void runtimeLog(`设置：mihomo 安装失败 — ${e}`, "ERROR");
     } finally {
       if (myToken === resetToken) set({ installing: false });
     }
   },
 
-  // 离开设置页时调用:状态完全重置回初始空态。下次进入设置页只有"检查更新"
-  // 按钮，用户主动点击才会触发 checking,不会被旧的"已是最新"误导。
-  // 自增 resetToken 让在跑的 check/install 在 await 完成后识别出"已被 reset",
-  // 不再回写状态,杜绝陈旧结果回流。
+  // 离开设置页时清掉终态展示(none/error)，避免下次进入先闪"已是最新"。
+  // checking/installing 保留，并禁止自增 token，以免后台下载成功后无法回写。
   reset() {
+    if (get().checking || get().installing) return;
     ++resetToken;
     set({ checking: false, installing: false, info: null, installResult: null });
   },

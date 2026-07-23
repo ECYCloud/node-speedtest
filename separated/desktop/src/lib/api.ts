@@ -37,7 +37,7 @@ async function apiPostFile<T>(
     这里集中识别并抛出语义清晰的错误，避免污染上层 store 的数据状态。 */
 function safeJson<T>(path: string, text: string): T {
   const trimmed = text.trim();
-  if (trimmed === "running") {
+  if (trimmed === "running" || trimmed === "busy") {
     throw new Error("后端正在测速中，请等当前任务结束");
   }
   if (trimmed === "error") {
@@ -88,17 +88,18 @@ export interface NodeResult {
   /** 最高瞬时速度，字节/秒;后端 webgui_wrapper.json_write_node 写入。 */
   dspeedMax: number;
   trafficUsed: number;
-  /** UDP 支持等级原始枚举:来自 STUN(RFC 3489) 检测，值为
-   *  FullCone / RestrictedCone / PortRestrictedCone / Symmetric / Blocked / Unknown。
-   *  pref.ini 的 test_nat_type=false 或 STUN 失败时为 "Unknown"。前端用 udpLevelLabel()
-   *  把它映射成中文展示。 */
+  /** UDP：经 SOCKS5 UDP ASSOCIATE + Classic STUN(RFC 3489) 探测。 */
   natType?: string;
+  /** TLS：经出站对 cp.cloudflare.com:443 做 WebPKI 核实。Verified/Failed/NotApplicable */
+  tlsVerified?: string;
 }
 
 export interface ResultsPayload {
   status: "running" | "stopped";
   current: Partial<NodeResult>;
   results: NodeResult[];
+  /** 本轮目标节点数（后端 target_nodes.len） */
+  targetCount?: number;
 }
 
 export interface StartParams {
@@ -117,8 +118,6 @@ export const api = {
     apiPostFile<NodeConfig[]>("/readfileconfig", fileName, fileBytes),
   start: (params: StartParams) =>
     apiPostJson<string>("/start", params, false),
-  // 节点级停止:后端把 stop_requested 置 true,batchTest 当前节点跑完后跳出循环。
-  // 不杀后端进程,allNodes/targetNodes 全程保留，再点开始可无缝继续。
   stop: () => apiPostJson<string>("/stop", {}, false),
   results: () => apiGet<ResultsPayload>("/getresults"),
 };

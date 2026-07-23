@@ -44,14 +44,14 @@ export default function Importer() {
         导入节点
       </SectionTitle>
 
-      {/* 分组名:作为 PNG 标题 / 历史文件名前缀，留空则用第一个节点的协议默认 group */}
+      {/* 分组名:PNG 标题 / 历史前缀；留空则为 Node Speedtest */}
       <div className="relative mb-3">
         <Tag
           size={16}
           className="absolute left-4 top-1/2 -translate-y-1/2 text-fg-muted pointer-events-none"
         />
         <Input
-          placeholder="分组名(可选，例:机场A)"
+          placeholder="分组名(可选；留空则为 Node Speedtest)"
           value={group}
           onChange={(e) => setGroup(e.target.value)}
           disabled={loadingConfigs}
@@ -105,7 +105,7 @@ export default function Importer() {
           {/* 读取按钮:与测试按钮一致 —— 左侧提示文字，右侧按钮 shrink-0 */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-xs text-fg-muted min-w-0 flex-1">
-              推荐导入 Clash（mihomo/meta）订阅链接
+              支持 http(s) 订阅、Clash YAML，以及 trojan/vless/ss 等单节点链接
             </div>
             <Button
               variant="primary"

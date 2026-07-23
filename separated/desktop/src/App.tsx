@@ -53,12 +53,12 @@ function Sidebar({
       <div className="h-14 flex items-center gap-2.5 px-4 border-b border-border">
         <img
           src={logoUrl}
-          alt="Stair Speedtest"
+          alt="Node Speedtest"
           className="w-9 h-9 rounded-lg object-contain shrink-0 select-none"
           draggable={false}
         />
         <span className="font-semibold text-base whitespace-nowrap truncate">
-          Stair Speedtest
+          Node Speedtest
         </span>
       </div>
       <nav className="px-3 pt-3 pb-2 flex flex-col gap-1">
@@ -88,7 +88,7 @@ function Sidebar({
         </div>
         <button
           onClick={onAbout}
-          title="关于 Stair Speedtest"
+          title="关于 Node Speedtest"
           aria-label="关于"
           className="inline-flex items-center gap-1.5 px-3 h-8 rounded-full text-xs text-fg-muted hover:bg-border/30 hover:text-fg transition shrink-0"
         >
@@ -103,8 +103,9 @@ function Sidebar({
 function Topbar({ view }: { view: View }) {
   // 顶栏标题随当前界面变化，直接复用导航里的 label
   const title = NAV.find((n) => n.key === view)?.label ?? "";
+  // 水平内边距与下方 main 的 p-6 一致，保证菜单标题与卡片左缘对齐
   return (
-    <header className="h-14 shrink-0 border-b border-border bg-bg-elev/40 backdrop-blur-sm flex items-center justify-between px-5">
+    <header className="h-14 shrink-0 border-b border-border bg-bg-elev/40 backdrop-blur-sm flex items-center justify-between px-6">
       <div className="text-base font-semibold">{title}</div>
       <div className="flex items-center gap-2">
         <StatusPill />

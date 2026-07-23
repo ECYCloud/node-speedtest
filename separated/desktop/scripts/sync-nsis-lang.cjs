@@ -59,7 +59,7 @@ const NSIS_TAURI_UTILS_REL_PATH = path.join("Plugins", "x86-unicode", "additiona
 function httpDownload(url, dst, redirects = 5) {
     return new Promise((resolve, reject) => {
         if (redirects < 0) return reject(new Error("重定向次数过多"));
-        const req = https.get(url, { headers: { "User-Agent": "stair-speedtest-build" } }, (res) => {
+        const req = https.get(url, { headers: { "User-Agent": "node-speedtest-build" } }, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 res.resume();
                 return resolve(httpDownload(res.headers.location, dst, redirects - 1));

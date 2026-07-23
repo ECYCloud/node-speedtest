@@ -1,67 +1,15 @@
-Stair Speedtest Reborn (mihomo edition)
-=========================================
+Node Speedtest — 第三方说明
+============================
 
-本软件基于以下开源项目二次开发,完整许可证见 LICENSE 文件。
+本软件（Node Speedtest）的许可证为 MIT License，全文见同目录 LICENSE。
+Copyright © 2026 ECYCloud。
 
-------------------------------------------------------------
-上游项目 / Upstream Project
-------------------------------------------------------------
-名称:   stairspeedtest-reborn
-作者:   tindy2013
-仓库:   https://github.com/tindy2013/stairspeedtest-reborn
-许可证: MIT License
-版权:   Copyright (c) 2019 tindy2013
+本文件不是第二套软件许可证，仅说明随包第三方组件的原许可证。
 
-本软件保留并附带上游项目的 MIT 许可证全文(见同目录 LICENSE 文件)。
-按 MIT 许可证条款,上游版权声明与许可证文本必须随软件副本一并分发。
+mihomo (Clash.Meta)
+  独立可执行文件，经子进程调用，属 GPL-3.0 聚合分发（aggregate）。
+  源码：https://github.com/MetaCubeX/mihomo
+  全文：licenses/GPL-3.0.txt
 
-------------------------------------------------------------
-本次二次开发 / Modifications
-------------------------------------------------------------
-维护者:   ECYCloud
-仓库:     https://github.com/ECYCloud/stairspeedtest-reborn-mihomo
-许可证:   MIT License(继承上游)
-
-主要变更:
-  * 代理后端统一为内置 mihomo (Clash.Meta) 内核
-  * 新增 Tauri 桌面端(separated/desktop/),提供现代 React UI
-  * 内置 HTTP API 服务模式(libevent),供前端消费
-  * 测速结果图改用 SSRSpeed / 喵速 风格渲染器
-  * 跨平台 CI(Linux/Windows/macOS,x86_64 + arm64)
-
-------------------------------------------------------------
-随包分发的 GPL 组件 / Bundled GPL Components
-------------------------------------------------------------
-本软件分发包内含以下 GPL 许可的独立可执行文件,通过子进程调用,
-属于 GPL-3.0 第 5 节定义的「聚合分发」(aggregate),不会让本软件
-的其他部分被 GPL 传染:
-
-  mihomo (Clash.Meta)
-    版权:   Copyright (C) MetaCubeX
-    许可证: GNU General Public License v3.0
-    位置:   tools/clients/mihomo(.exe)
-    源码:   https://github.com/MetaCubeX/mihomo
-    全文:   见同目录 licenses/GPL-3.0.txt
-
-  按 GPL-3.0 第 6 节,获得本软件二进制副本的用户有权获取 mihomo
-  的完整对应源代码。源代码可通过以下方式获取:
-    1. 直接访问上游仓库 https://github.com/MetaCubeX/mihomo
-       下载与本分发包内 mihomo.exe 版本一致的 tag 源码(推荐);
-    2. 也可向本软件维护者书面索取(联系方式见仓库 README)。
-
-  本软件未对 mihomo 做任何修改,二进制文件来自 MetaCubeX 官方发布。
-
-------------------------------------------------------------
-第三方依赖 / Third-Party Components
-------------------------------------------------------------
-本软件运行时还使用了以下开源组件,各组件遵循其自有许可证:
-
-  * libcurl, OpenSSL, libevent, libpcre2, rapidjson, yaml-cpp,
-    libpng, FreeType, HarfBuzz, PNGwriter, zlib, bzip2
-
-UI 资源:
-  * Source Han Sans CN  - SIL Open Font License 1.1
-  * Twemoji (Flat)      - CC-BY 4.0
-  * lucide-react        - ISC License
-
-各组件完整许可证可在其官方仓库查阅。
+其他：Source Han Sans（OFL）、TwemojiFlat（CC-BY 4.0）、lucide-react（ISC）等，
+见各上游项目。

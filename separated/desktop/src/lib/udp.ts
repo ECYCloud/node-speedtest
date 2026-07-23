@@ -1,7 +1,7 @@
-// UDP 支持等级映射 - 与后端 src/renderer_v2.cpp::udpSupportLevel() 保持同步。
+// UDP 支持等级映射 - 与 Rust 引擎 STUN(RFC 3489) / 结果 PNG 标签保持同步。
 //
-// 后端 nodeInfo.natType 来自 STUN(RFC 3489) 检测，取值是 ntt.cpp 的 NAT_TYPE_STR
-// 英文枚举。前端结果表与历史记录 PNG 都用这套同源映射,UI 文案与图片文案一致。
+// natType 取值：FullCone / RestrictedCone / PortRestrictedCone / Symmetric /
+// Blocked / Unknown。前端结果表与导出 PNG 使用同一套中文标签。
 //
 // 等级语义(从高到低):
 //   FullCone           完全支持   (Endpoint-Independent,P2P/UDP 应用最稳)

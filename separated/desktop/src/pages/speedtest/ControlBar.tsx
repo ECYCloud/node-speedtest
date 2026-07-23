@@ -23,7 +23,7 @@ const SORT_METHODS = [
 
 export default function ControlBar() {
   const {
-    selected, results, status,
+    selected, results, status, starting, targetCount,
     testMode, sortMethod,
     setTestMode, setSortMethod,
     startTest, stopTest,
@@ -31,11 +31,12 @@ export default function ControlBar() {
 
   // 三态对应三种按钮形态:
   //   running  → "停止"(可点)
-  //   stopping → "停止中"(loader,disabled) — 前端已发停止指令，等待后端 batchTest
+  //   stopping → "停止中"(loader,disabled) — 已发停止，等待引擎协作退出
   //              真正退出循环并被 polling 拉到。这段时间不切回"开始测试",避免闪烁。
   //   stopped  → "开始测试"(可点，选中节点 > 0)
   const running = status === "running";
   const stopping = status === "stopping";
+  const total = targetCount > 0 ? targetCount : selected.size;
 
   return (
     <Card className="p-5">
@@ -63,12 +64,14 @@ export default function ControlBar() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-xs text-fg-muted min-w-0 flex-1">
           {running
-            ? `共 ${selected.size} 个节点中，已完成 ${results.length}`
+            ? `共 ${total} 个节点中，已完成 ${results.length}`
             : stopping
               ? "正在停止当前任务…"
-              : selected.size > 0
-                ? `将测试 ${selected.size} 个节点`
-                : "请先在节点列表中勾选节点"}
+              : starting
+                ? "正在启动测速…"
+                : selected.size > 0
+                  ? `将测试 ${selected.size} 个节点`
+                  : "请先在节点列表中勾选节点"}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {(running || stopping) ? (
@@ -88,12 +91,16 @@ export default function ControlBar() {
           ) : (
             <Button
               variant="primary"
-              disabled={selected.size === 0}
+              disabled={selected.size === 0 || starting}
               onClick={() => startTest(testMode, sortMethod)}
               className="min-w-[6.5rem] justify-center"
             >
-              <Play size={14} />
-              开始测试
+              {starting ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Play size={14} />
+              )}
+              {starting ? "启动中" : "开始测试"}
             </Button>
           )}
         </div>

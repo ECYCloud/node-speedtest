@@ -1,0 +1,4 @@
+Material Icons (check_circle, warning, cancel)
+Copyright Google LLC
+License: Apache License 2.0
+https://github.com/google/material-design-icons

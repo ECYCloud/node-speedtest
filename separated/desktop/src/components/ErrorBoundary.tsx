@@ -30,6 +30,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
       error: null,
       filter: "",
       typeFilter: new Set(),
+      status: "stopped",
+      starting: false,
+      targetCount: 0,
     });
     this.setState({ err: null });
   };

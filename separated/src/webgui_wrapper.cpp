@@ -536,11 +536,11 @@ void ssrspeed_webserver_routine(const std::string &listen_address, int listen_po
         static UpdateCheckCache cache;
         return serveUpdateCheck(
             cache,
-            "https://api.github.com/repos/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest",
-            "https://github.com/ECYCloud/stairspeedtest-reborn-mihomo/releases/latest",
+            "https://api.github.com/repos/ECYCloud/node-speedtest/releases/latest",
+            "https://github.com/ECYCloud/node-speedtest/releases/latest",
             [](){ return std::string(VERSION); });
     });
 
-    std::cerr << "Stair Speedtest " VERSION " Web server running @ http://" << listen_address << ":" << listen_port << std::endl;
+    std::cerr << "Node Speedtest " VERSION " Web server running @ http://" << listen_address << ":" << listen_port << std::endl;
     start_web_server_multi(&args);
 }

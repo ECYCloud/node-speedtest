@@ -21,7 +21,18 @@ export async function pollGithubReleaseCheck(apiPath: string): Promise<GithubRel
   const start = Date.now();
   for (;;) {
     const text = await invoke<string>("api_get", { path: apiPath });
-    const info = JSON.parse(text) as GithubReleaseInfo;
+    let info: GithubReleaseInfo;
+    try {
+      info = JSON.parse(text) as GithubReleaseInfo;
+    } catch {
+      return {
+        local: "",
+        latest: "",
+        has_update: false,
+        release_url: "https://github.com/MetaCubeX/mihomo/releases/latest",
+        error: "检查响应格式异常",
+      };
+    }
     if (info.error === PENDING_HINT && Date.now() - start < POLL_TIMEOUT_MS) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       continue;

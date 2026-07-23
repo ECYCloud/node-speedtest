@@ -20,8 +20,9 @@ OPTION(BUILD_WEBSERVER_ENGINE "Build the /web sidecar engine for the Tauri deskt
 #   -fno-strict-aliasing      避免依赖严格别名规则的优化 UB(项目里多处 reinterpret_cast)
 # 链接器:
 #   -Wl,--dynamicbase --high-entropy-va --nxcompat   PE ASLR/DEP 标记
-#   -Wl,-z,relro -Wl,-z,now                          ELF 立刻绑定 + 只读 GOT
-# Linux/macOS 才发 -fPIE -pie;MinGW 不需要(PE 走 --dynamicbase)
+#   -Wl,-z,relro -Wl,-z,now                          ELF 立刻绑定 + 只读 GOT（仅 Linux）
+# Linux/macOS 发 -fPIE -pie；-z 是 ELF 专用，Apple ld 不认，不能套到 macOS
+# MinGW 不需要 -pie（PE 走 --dynamicbase）
 IF(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     ADD_COMPILE_OPTIONS(-fstack-protector-strong -fno-strict-aliasing)
     # _FORTIFY_SOURCE 只在 -O1+ 下有意义;Release 默认 -O3，OK
@@ -30,7 +31,10 @@ IF(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         ADD_LINK_OPTIONS(-Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
     ELSE()
         ADD_COMPILE_OPTIONS(-fPIE)
-        ADD_LINK_OPTIONS(-pie -Wl,-z,relro -Wl,-z,now)
+        ADD_LINK_OPTIONS(-pie)
+        IF(NOT APPLE)
+            ADD_LINK_OPTIONS(-Wl,-z,relro -Wl,-z,now)
+        ENDIF()
     ENDIF()
 ENDIF()
 # ---- 安全硬化 end -----------------------------------------------------------

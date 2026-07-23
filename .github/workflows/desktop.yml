@@ -103,6 +103,8 @@ jobs:
           cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
           cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
           cp base/pref.ini "$ENGINE/"
+          # MinGW OpenSSL 无系统信任库;webGet 开启 VERIFYPEER 后必须自带 CA bundle
+          curl -fsSL "https://curl.se/ca/cacert.pem" -o "$ENGINE/cacert.pem"
 
           # mihomo 内核
           MV=${{ steps.ver.outputs.mihomo }}
@@ -259,6 +261,8 @@ jobs:
           cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
           cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
           cp base/pref.ini "$ENGINE/"
+          # MinGW OpenSSL 无系统信任库;webGet 开启 VERIFYPEER 后必须自带 CA bundle
+          curl -fsSL "https://curl.se/ca/cacert.pem" -o "$ENGINE/cacert.pem"
 
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-windows-arm64-$MV.zip"
@@ -398,6 +402,8 @@ jobs:
           cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
           cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
           cp base/pref.ini "$ENGINE/"
+          # 与 Windows 对齐:engine 自带 CA bundle,避免依赖 runner 系统信任库差异
+          curl -fsSL "https://curl.se/ca/cacert.pem" -o "$ENGINE/cacert.pem"
 
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-darwin-arm64-$MV.gz"
@@ -553,6 +559,8 @@ jobs:
           cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
           cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
           cp base/pref.ini "$ENGINE/"
+          # 与 Windows 对齐:engine 自带 CA bundle,避免依赖 runner 系统信任库差异
+          curl -fsSL "https://curl.se/ca/cacert.pem" -o "$ENGINE/cacert.pem"
 
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-darwin-amd64-$MV.gz"
@@ -725,6 +733,8 @@ jobs:
           cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
           cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
           cp base/pref.ini "$ENGINE/"
+          # 与 Windows 对齐:engine 自带 CA bundle,避免依赖 runner 系统信任库差异
+          curl -fsSL "https://curl.se/ca/cacert.pem" -o "$ENGINE/cacert.pem"
 
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-linux-amd64-$MV.gz"
@@ -895,6 +905,8 @@ jobs:
           cp separated/desktop/engine-assets/config.yaml "$ENGINE/"
           cp separated/desktop/engine-assets/sub_link.txt "$ENGINE/"
           cp base/pref.ini "$ENGINE/"
+          # 与 Windows 对齐:engine 自带 CA bundle,避免依赖 runner 系统信任库差异
+          curl -fsSL "https://curl.se/ca/cacert.pem" -o "$ENGINE/cacert.pem"
 
           MV=${{ steps.ver.outputs.mihomo }}
           curl -fLO "https://github.com/MetaCubeX/mihomo/releases/download/$MV/mihomo-linux-arm64-$MV.gz"

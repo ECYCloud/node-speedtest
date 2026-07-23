@@ -369,9 +369,13 @@ int putSocksAddress(char **p, const std::string &host, const uint16_t dest_port)
 
 std::tuple<std::string, uint16_t> getSocksAddress(const std::string &data)
 {
+    // STUN MAPPED_ADDRESS 最短:reserved(1)+family(1)+port(2)+IPv4(4)=8。
+    // 短缓冲上 substr/下标会抛 std::out_of_range，经 FutureHelper 再二次抛会 terminate。
+    if(data.size() < 8)
+        return std::make_tuple(std::string(), 0);
     char cAddr[128] = {};
     std::string retAddr, port_str = data.substr(2, 2);
-    int family = data[1];
+    int family = static_cast<unsigned char>(data[1]);
     uint16_t port = ntohs(*(short*)port_str.data());
     switch(family)
     {
@@ -379,8 +383,12 @@ std::tuple<std::string, uint16_t> getSocksAddress(const std::string &data)
         inet_ntop(AF_INET, data.data() + 4, cAddr, 127);
         break;
     case 2: //IPv6
+        if(data.size() < 20)
+            return std::make_tuple(std::string(), 0);
         inet_ntop(AF_INET6, data.data() + 4, cAddr, 127);
         break;
+    default:
+        return std::make_tuple(std::string(), 0);
     }
     retAddr.assign(cAddr);
     return std::make_tuple(retAddr, port);

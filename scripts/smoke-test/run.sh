@@ -116,6 +116,11 @@ sleep 2  # 让测速线程把 start_flag 翻成 true,避免下面循环立刻看
 DEADLINE=$(( $(date +%s) + 600 ))
 LAST_DONE=-1
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+  if ! kill -0 "$PID" 2>/dev/null; then
+    echo "FAIL 阶段 4: 引擎进程已退出(可能未捕获异常崩溃)"
+    echo "--- stderr ---"; cat engine_stderr.log || true
+    exit 4
+  fi
   ST=$(curl -fsS --max-time 5 "${BASE}/status" 2>/dev/null || echo "?")
   if [ "$ST" = "stopped" ]; then
     echo "[smoke] 测速完成"

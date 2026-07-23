@@ -188,9 +188,16 @@ STUN_RESPONSE get_stun_response_thru_socks5(SOCKET udp_s, const std::string &ser
             fail_count++;
             continue;
         }
+        // STUN 头固定 20 字节;更短则 attrs.assign(buf+20, len-20) 会 size_t 下溢。
+        if(len < 20)
+        {
+            writeLog(LOG_TYPE_STUN, "STUN response too short (" + std::to_string(len) + " bytes).");
+            fail_count++;
+            continue;
+        }
         msg_type.assign(buf, 2);
         recv_trans_id.assign(buf + 4, 16);
-        attrs.assign(buf + 20, len - 20);
+        attrs.assign(buf + 20, static_cast<size_t>(len - 20));
         if(memcmp(msg_type.c_str(), BIND_RESPONSE_MSG, 2) != 0)
         {
             //cerr<<"return false response"<<endl;
@@ -213,14 +220,19 @@ STUN_RESPONSE get_stun_response_thru_socks5(SOCKET udp_s, const std::string &ser
 
     string_size pos = 0, attr_length = 0;
     std::string attr_type, attr_value;
-    while(pos < attrs.size())
+    // 属性头至少 4 字节(type+length);越界 substr 会抛 out_of_range。
+    while(pos + 4 <= attrs.size())
     {
         attr_type = attrs.substr(pos, 2);
         attr_length = str_to_int(attrs.substr(pos + 2, 2));
+        if(pos + 4 + attr_length > attrs.size())
+            break;
         attr_value = attrs.substr(pos + 4, attr_length);
-        pos += attr_length + 4;
-        if(attr_length % 4)
-            attr_length += 4 - (attr_length % 4);
+        // RFC 3489:属性值按 4 字节对齐填充;必须先算 padded 再推进 pos。
+        string_size padded = attr_length;
+        if(padded % 4)
+            padded += 4 - (padded % 4);
+        pos += 4 + padded;
         if(memcmp(attr_type.c_str(), MAPPED_ADDRESS, 2) == 0)
         {
             std::string ip;

@@ -304,7 +304,17 @@ public:
             return T();
         if(!_priv_fetched)
         {
-            _priv_inter_store = _priv_inter_future.get();
+            // future 内异常不得再向外抛:singleTest 入口有
+            // defer(... natType.get())，若函数体中途 get() 已抛，栈展开时
+            // defer 再 get() 会二次抛 → std::terminate 整进程崩掉(macOS Abort trap 6)。
+            try
+            {
+                _priv_inter_store = _priv_inter_future.get();
+            }
+            catch(...)
+            {
+                _priv_inter_store = T();
+            }
             _priv_fetched = true;
         }
         return _priv_inter_store;
@@ -316,7 +326,14 @@ public:
             return T();
         if(!_priv_fetched)
         {
-            _priv_inter_store = _priv_inter_future.get();
+            try
+            {
+                _priv_inter_store = _priv_inter_future.get();
+            }
+            catch(...)
+            {
+                _priv_inter_store = T();
+            }
             _priv_fetched = true;
         }
         return std::move(_priv_inter_store);

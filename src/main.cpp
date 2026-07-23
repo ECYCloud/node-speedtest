@@ -979,7 +979,22 @@ int singleTest(nodeInfo &node)
     if(test_nat_type)
     {
         printMsg(SPEEDTEST_MESSAGE_STARTNAT, rpcmode, id);
-        node.natType.set(std::async(std::launch::async, [testserver, testport, username, password](){ return get_nat_type_thru_socks5(testserver, testport, username, password); }));
+        node.natType.set(std::async(std::launch::async, [testserver, testport, username, password](){
+            try
+            {
+                return get_nat_type_thru_socks5(testserver, testport, username, password);
+            }
+            catch(const std::exception &e)
+            {
+                writeLog(LOG_TYPE_STUN, std::string("NAT detect exception: ") + e.what());
+                return std::string("Unknown");
+            }
+            catch(...)
+            {
+                writeLog(LOG_TYPE_STUN, "NAT detect unknown exception.");
+                return std::string("Unknown");
+            }
+        }));
     }
 
     printMsg(SPEEDTEST_MESSAGE_STARTPING, rpcmode, id);

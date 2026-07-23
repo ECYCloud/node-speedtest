@@ -113,7 +113,8 @@ curl -fsS --max-time 10 -X POST "${BASE}/start" \
 echo ""
 sleep 2  # 让测速线程把 start_flag 翻成 true,避免下面循环立刻看到 stopped 而误判完成
 
-DEADLINE=$(( $(date +%s) + 600 ))
+# 多候选 STUN 在 UDP Blocked 节点上约 10–15s/节点,46 节点仅延迟模式常见 12–15 分钟。
+DEADLINE=$(( $(date +%s) + 900 ))
 LAST_DONE=-1
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   if ! kill -0 "$PID" 2>/dev/null; then
@@ -138,7 +139,7 @@ except Exception: print(0)")
 done
 
 ST=$(curl -fsS --max-time 5 "${BASE}/status" 2>/dev/null || echo "?")
-[ "$ST" = "stopped" ] || { echo "FAIL 阶段 4: 10 分钟后仍未完成 (status=$ST)"; exit 4; }
+[ "$ST" = "stopped" ] || { echo "FAIL 阶段 4: 15 分钟后仍未完成 (status=$ST)"; exit 4; }
 echo "::endgroup::"
 
 # 阶段 5: 至少 1 个节点 ping > 0

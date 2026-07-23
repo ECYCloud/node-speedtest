@@ -5,6 +5,7 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
+#include <chrono>
 #include <future>
 #include <sys/types.h>
 #include <dirent.h>
@@ -317,6 +318,29 @@ public:
             }
             _priv_fetched = true;
         }
+        return _priv_inter_store;
+    }
+
+    // 非阻塞读取:供 /getresults 等 HTTP 回调使用。future 未就绪时返回 fallback,
+    // 避免 worker 线程卡在 STUN/GeoIP 上导致轮询超时、进度数字来回跳 0。
+    T get_nowait(T fallback = T())
+    {
+        if(!_priv_set)
+            return fallback;
+        if(_priv_fetched)
+            return _priv_inter_store;
+        if(!_priv_inter_future.valid() ||
+           _priv_inter_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return fallback;
+        try
+        {
+            _priv_inter_store = _priv_inter_future.get();
+        }
+        catch(...)
+        {
+            _priv_inter_store = fallback;
+        }
+        _priv_fetched = true;
         return _priv_inter_store;
     }
 

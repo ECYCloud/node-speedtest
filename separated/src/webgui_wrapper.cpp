@@ -107,7 +107,9 @@ double ssrspeed_get_speed_number(const std::string &speed)
 
 void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInfo &node)
 {
-    geoIPInfo inbound = node.inboundGeoIP.get(), outbound = node.outboundGeoIP.get();
+    // /getresults 在 libevent worker 上同步调用:绝不能 get() 阻塞等待 STUN/GeoIP,
+    // 否则多 worker 被占满 → 轮询卡死、smoke 进度在 N/46 与 0/46 间抖动。
+    geoIPInfo inbound = node.inboundGeoIP.get_nowait(), outbound = node.outboundGeoIP.get_nowait();
     int counter = 0, total = 0;
     // 安全转换:节点处于测试中间态时这些字段可能为空/非数字，裸 stod 会抛
     // invalid_argument 异常 —— /getresults 在 web 线程里调用，异常会让该线程崩溃。
@@ -192,7 +194,7 @@ void json_write_node(rapidjson::Writer<rapidjson::StringBuffer> &writer, nodeInf
     // PortRestrictedCone / Symmetric / Blocked / Unknown),前端再映射成中文。
     // 与历史记录 PNG 渲染走同一份数据源，语义一致。
     writer.Key("natType");
-    writer.String(node.natType.get().data());
+    writer.String(node.natType.get_nowait(std::string("Unknown")).data());
 }
 
 std::string ssrspeed_generate_results(std::vector<nodeInfo> &nodes)
